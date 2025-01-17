@@ -100,6 +100,18 @@ class MediaStreamTrackNative extends MediaStreamTrack {
   }
 
   @override
+  Future<void> captureFrameToFile(String path) async {
+    await WebRTC.invokeMethod(
+      'captureFrame',
+      <String, dynamic>{
+        'trackId': _trackId,
+        'peerConnectionId': _peerConnectionId,
+        'path': path
+      },
+    );
+  }
+
+  @override
   Future<void> applyConstraints([Map<String, dynamic>? constraints]) {
     if (constraints == null) return Future.value();
 

@@ -184,6 +184,7 @@ static FlutterWebRTCPlugin *sharedSingleton;
   self.frameCryptors = [NSMutableDictionary new];
   self.keyProviders = [NSMutableDictionary new];
   self.videoCapturerStopHandlers = [NSMutableDictionary new];
+  self.recorders = [NSMutableDictionary new];  // Initialize recorders dictionary
 #if TARGET_OS_IPHONE
   self.focusMode = @"locked";
   self.exposureMode = @"locked";
@@ -1485,6 +1486,60 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
           errorWithCode:[NSString stringWithFormat:@"%@Failed", call.method]
                 message:[NSString stringWithFormat:@"Error: peerConnection not found!"]
                 details:nil]);
+    }
+  } else if ([@"startRecordToFile" isEqualToString:call.method]) {
+    NSString* path = call.arguments[@"path"];
+    NSString* videoTrackId = call.arguments[@"videoTrackId"];
+    NSString* peerConnectionId = call.arguments[@"peerConnectionId"];
+    NSNumber* recorderId = call.arguments[@"recorderId"];
+    
+    RTCVideoTrack* videoTrack = nil;
+    if (videoTrackId) {
+      RTCMediaStreamTrack* track = [self trackForId:videoTrackId peerConnectionId:peerConnectionId];
+      if ([track isKindOfClass:[RTCVideoTrack class]]) {
+        videoTrack = (RTCVideoTrack*)track;
+      }
+    }
+    
+    id<RTCAudioRenderer> audioInterceptor = nil;
+    if (call.arguments[@"audioChannel"]) {
+      // TODO: Implement audio recording if needed
+    }
+    
+    if (videoTrack != nil || audioInterceptor != nil) {
+      MediaRecorderImpl* recorder = [[MediaRecorderImpl alloc] initWithId:recorderId
+                                                             videoTrack:videoTrack
+                                                        audioInterceptor:audioInterceptor];
+      
+      NSError* error = nil;
+      [recorder startRecording:path error:&error];
+      
+      if (error) {
+        result([FlutterError errorWithCode:@"startRecordToFile_error"
+                                 message:error.localizedDescription
+                                 details:nil]);
+        return;
+      }
+      
+      [self.recorders setObject:recorder forKey:recorderId];
+      result(nil);
+    } else {
+      result([FlutterError errorWithCode:@"startRecordToFile_error"
+                               message:@"No tracks available"
+                               details:nil]);
+    }
+  } else if ([@"stopRecordToFile" isEqualToString:call.method]) {
+    NSNumber* recorderId = call.arguments[@"recorderId"];
+    MediaRecorderImpl* recorder = [self.recorders objectForKey:recorderId];
+    
+    if (recorder) {
+      [recorder stopRecording];
+      [self.recorders removeObjectForKey:recorderId];
+      result(nil);
+    } else {
+      result([FlutterError errorWithCode:@"stopRecordToFile_error"
+                               message:@"Recorder not found"
+                               details:nil]);
     }
   } else {
     [self handleFrameCryptorMethodCall:call result:result];

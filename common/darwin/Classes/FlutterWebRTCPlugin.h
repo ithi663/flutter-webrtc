@@ -7,6 +7,7 @@
 #import <Foundation/Foundation.h>
 #import <WebRTC/WebRTC.h>
 #import "LocalTrack.h"
+#import "MediaRecorderImpl.h"
 
 @class FlutterRTCVideoRenderer;
 @class FlutterRTCFrameCapturer;
@@ -58,6 +59,8 @@ typedef void (^CapturerStopHandler)(CompletionHandler _Nonnull handler);
 @property(nonatomic) NSInteger _lastTargetFps;
 
 @property(nonatomic, strong) AudioManager* _Nullable audioManager;
+
+@property(nonatomic, strong) NSMutableDictionary<NSNumber*, MediaRecorderImpl*>* _Nullable recorders;
 
 - (RTCMediaStream* _Nullable)streamForId:(NSString* _Nonnull)streamId peerConnectionId:(NSString* _Nullable)peerConnectionId;
 - (RTCMediaStreamTrack* _Nullable)trackForId:(NSString* _Nonnull)trackId peerConnectionId:(NSString* _Nullable)peerConnectionId;
