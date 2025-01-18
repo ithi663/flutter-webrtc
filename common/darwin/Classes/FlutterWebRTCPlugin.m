@@ -1493,6 +1493,13 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     NSString* peerConnectionId = call.arguments[@"peerConnectionId"];
     NSNumber* recorderId = call.arguments[@"recorderId"];
     
+    if (!path || !recorderId) {
+        result([FlutterError errorWithCode:@"startRecordToFile_error"
+                                 message:@"Invalid arguments: path and recorderId are required"
+                                 details:nil]);
+        return;
+    }
+    
     RTCVideoTrack* videoTrack = nil;
     if (videoTrackId) {
       RTCMediaStreamTrack* track = [self trackForId:videoTrackId peerConnectionId:peerConnectionId];
@@ -1506,28 +1513,33 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
       // TODO: Implement audio recording if needed
     }
     
-    if (videoTrack != nil || audioInterceptor != nil) {
-      MediaRecorderImpl* recorder = [[MediaRecorderImpl alloc] initWithId:recorderId
-                                                             videoTrack:videoTrack
-                                                        audioInterceptor:audioInterceptor];
-      
-      NSError* error = nil;
-      [recorder startRecording:path error:&error];
-      
-      if (error) {
+    if (!videoTrack && !audioInterceptor) {
         result([FlutterError errorWithCode:@"startRecordToFile_error"
-                                 message:error.localizedDescription
+                                 message:@"No valid video or audio track found"
                                  details:nil]);
         return;
-      }
-      
-      [self.recorders setObject:recorder forKey:recorderId];
-      result(nil);
-    } else {
-      result([FlutterError errorWithCode:@"startRecordToFile_error"
-                               message:@"No tracks available"
-                               details:nil]);
     }
+    
+    MediaRecorderImpl* recorder = [[MediaRecorderImpl alloc] initWithId:recorderId
+                                                         videoTrack:videoTrack
+                                                    audioInterceptor:audioInterceptor];
+    
+    NSError* error = nil;
+    [recorder startRecording:path error:&error];
+    
+    if (error) {
+        NSString* errorMessage = error.localizedDescription;
+        if (error.userInfo[NSLocalizedDescriptionKey]) {
+            errorMessage = error.userInfo[NSLocalizedDescriptionKey];
+        }
+        result([FlutterError errorWithCode:@"startRecordToFile_error"
+                                 message:errorMessage
+                                 details:nil]);
+        return;
+    }
+    
+    [self.recorders setObject:recorder forKey:recorderId];
+    result(nil);
   } else if ([@"stopRecordToFile" isEqualToString:call.method]) {
     NSNumber* recorderId = call.arguments[@"recorderId"];
     MediaRecorderImpl* recorder = [self.recorders objectForKey:recorderId];
