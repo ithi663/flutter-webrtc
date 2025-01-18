@@ -176,8 +176,9 @@
     
     // Start writing
     if ([_assetWriter startWriting]) {
-        [_assetWriter startSessionAtSourceTime:CMTimeMake(0, 1000)];
+        [_assetWriter startSessionAtSourceTime:CMTimeMake(0, 1000000000)];
         _isRecording = YES;
+        _recordingStartTime = [NSDate date];
         NSLog(@"[MediaRecorder-%@] Successfully started recording", _recorderId);
     } else {
         NSLog(@"[MediaRecorder-%@] Failed to start recording: %@", _recorderId, _assetWriter.error.localizedDescription);
@@ -312,36 +313,53 @@
         return;
     }
     
-    // Check if we need to update video dimensions based on the first frame
-    if (self.processedFrameCount == 0) {
-        CGSize frameSize = CGSizeMake(frame.width, frame.height);
-        NSLog(@"[MediaRecorder-%@] First frame size: %.0fx%.0f", _recorderId, frameSize.width, frameSize.height);
-        
-        // If the frame size is different from our initial settings, log a warning
-        CGSize currentSize = CGSizeMake(
-            [_videoInput.outputSettings[AVVideoWidthKey] integerValue],
-            [_videoInput.outputSettings[AVVideoHeightKey] integerValue]);
-        
-        if (!CGSizeEqualToSize(frameSize, currentSize)) {
-            NSLog(@"[MediaRecorder-%@] Warning: Frame size (%.0fx%.0f) differs from recording size (%.0fx%.0f)", 
-                  _recorderId, frameSize.width, frameSize.height, currentSize.width, currentSize.height);
-        }
+    // Validate frame
+    if (!frame || frame.width == 0 || frame.height == 0) {
+        NSLog(@"[MediaRecorder-%@] Warning: Invalid frame received", _recorderId);
+        return;
     }
     
+    // Log frame info periodically
     self.processedFrameCount++;
-    if (self.processedFrameCount % 300 == 0) {  // Log every 300 frames to avoid spam
-        NSLog(@"[MediaRecorder-%@] Processing frame %ld", _recorderId, (long)self.processedFrameCount);
+    if (self.processedFrameCount % 100 == 0) {
+        NSLog(@"[MediaRecorder-%@] Frame stats - Processed: %ld, Dropped: %ld, Size: %.0fx%.0f, Type: %@", 
+              _recorderId, 
+              (long)self.processedFrameCount,
+              (long)self.droppedFrameCount,
+              frame.width,
+              frame.height,
+              [frame.buffer isKindOfClass:[RTCCVPixelBuffer class]] ? @"CVPixelBuffer" : @"I420Buffer");
     }
     
-    CMTime timestamp = CMTimeMake(frame.timeStampNs, 1000000000);
+    // Calculate relative timestamp from start of recording
+    NSTimeInterval elapsedTime = [[NSDate date] timeIntervalSinceDate:_recordingStartTime];
+    CMTime timestamp = CMTimeMakeWithSeconds(elapsedTime, 1000000000);
+    
     CVPixelBufferRef pixelBuffer = NULL;
     
     if ([frame.buffer isKindOfClass:[RTCCVPixelBuffer class]]) {
         RTCCVPixelBuffer *rtcPixelBuffer = (RTCCVPixelBuffer *)frame.buffer;
         pixelBuffer = rtcPixelBuffer.pixelBuffer;
-        CVPixelBufferRetain(pixelBuffer);
+        
+        // Validate pixel buffer content
+        if (pixelBuffer) {
+            CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
+            void *baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer);
+            CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
+            
+            if (!baseAddress) {
+                NSLog(@"[MediaRecorder-%@] Warning: Empty pixel buffer received", _recorderId);
+                return;
+            }
+            
+            CVPixelBufferRetain(pixelBuffer);
+        }
     } else if ([frame.buffer conformsToProtocol:@protocol(RTCI420Buffer)]) {
         id<RTCI420Buffer> i420Buffer = (id<RTCI420Buffer>)frame.buffer;
+        if (!i420Buffer.dataY || !i420Buffer.dataU || !i420Buffer.dataV) {
+            NSLog(@"[MediaRecorder-%@] Warning: Invalid I420 buffer received", _recorderId);
+            return;
+        }
         pixelBuffer = [self pixelBufferFromI420Buffer:i420Buffer];
     }
     
