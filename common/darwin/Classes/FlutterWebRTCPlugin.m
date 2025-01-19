@@ -1492,6 +1492,8 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     NSString* videoTrackId = call.arguments[@"videoTrackId"];
     NSString* peerConnectionId = call.arguments[@"peerConnectionId"];
     NSNumber* recorderId = call.arguments[@"recorderId"];
+    NSNumber* width = call.arguments[@"width"];
+    NSNumber* height = call.arguments[@"height"];
     
     if (!path || !recorderId) {
         result([FlutterError errorWithCode:@"startRecordToFile_error"
@@ -1525,7 +1527,10 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
                                                     audioInterceptor:audioInterceptor];
     
     NSError* error = nil;
-    [recorder startRecording:path error:&error];
+    [recorder startRecording:path
+                 withWidth:width ? [width integerValue] : 0
+                withHeight:height ? [height integerValue] : 0
+                    error:&error];
     
     if (error) {
         NSString* errorMessage = error.localizedDescription;

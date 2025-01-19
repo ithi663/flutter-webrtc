@@ -12,7 +12,10 @@ class MediaRecorderNative extends MediaRecorder {
 
   @override
   Future<void> start(String path,
-      {MediaStreamTrack? videoTrack, RecorderAudioChannel? audioChannel
+      {MediaStreamTrack? videoTrack,
+      RecorderAudioChannel? audioChannel,
+      int? width,
+      int? height
       // TODO(cloudwebrtc): add codec/quality options
       }) async {
     if (audioChannel == null && videoTrack == null) {
@@ -23,6 +26,8 @@ class MediaRecorderNative extends MediaRecorder {
       'path': path,
       if (audioChannel != null) 'audioChannel': audioChannel.index,
       if (videoTrack != null) 'videoTrackId': videoTrack.id,
+      if (width != null) 'width': width,
+      if (height != null) 'height': height,
       'recorderId': _recorderId,
       'peerConnectionId': videoTrack is MediaStreamTrackNative
           ? videoTrack.peerConnectionId

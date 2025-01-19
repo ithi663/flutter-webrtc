@@ -1,30 +1,30 @@
 #import "MediaRecorderImpl.h"
 
-@interface MediaRecorderImpl ()
+@interface MediaRecorderImpl () <RTCAudioRenderer>
 
-@property(nonatomic, strong) NSNumber* recorderId;
-@property(nonatomic, strong) RTCVideoTrack* videoTrack;
-@property(nonatomic, strong) id<RTCAudioRenderer> audioInterceptor;
-@property(nonatomic, strong) AVAssetWriter* assetWriter;
-@property(nonatomic, strong) AVAssetWriterInput* videoInput;
-@property(nonatomic, strong) AVAssetWriterInput* audioInput;
-@property(nonatomic, strong) dispatch_queue_t videoQueue;
-@property(nonatomic, strong) dispatch_queue_t audioQueue;
-@property(nonatomic, assign) BOOL isRecording;
-@property(nonatomic, strong) NSString* filePath;
-@property(nonatomic, strong) dispatch_semaphore_t completionSemaphore;
-@property(nonatomic, assign) NSInteger droppedFrameCount;
-@property(nonatomic, assign) NSInteger processedFrameCount;
-@property(nonatomic, strong) NSDate* recordingStartTime;
-@property(nonatomic, assign) NSTimeInterval completionTimeout;
-@property(nonatomic, copy) void (^recordingErrorHandler)(NSError* error);
+@property (nonatomic, strong) NSNumber *recorderId;
+@property (nonatomic, strong) RTCVideoTrack *videoTrack;
+@property (nonatomic, strong) id<RTCAudioRenderer> audioInterceptor;
+@property (nonatomic, strong) AVAssetWriter *assetWriter;
+@property (nonatomic, strong) AVAssetWriterInput *videoInput;
+@property (nonatomic, strong) AVAssetWriterInput *audioInput;
+@property (nonatomic, strong) dispatch_queue_t videoQueue;
+@property (nonatomic, strong) dispatch_queue_t audioQueue;
+@property (nonatomic, assign) BOOL isRecording;
+@property (nonatomic, strong) NSString *filePath;
+@property (nonatomic, strong) dispatch_semaphore_t completionSemaphore;
+@property (nonatomic, assign) NSInteger droppedFrameCount;
+@property (nonatomic, assign) NSInteger processedFrameCount;
+@property (nonatomic, strong) NSDate *recordingStartTime;
+@property (nonatomic, assign) NSTimeInterval completionTimeout;
+@property (nonatomic, copy) void (^recordingErrorHandler)(NSError *error);
 
 @end
 
 @implementation MediaRecorderImpl
 
-- (instancetype)initWithId:(NSNumber*)recorderId
-                videoTrack:(RTCVideoTrack*)videoTrack
+- (instancetype)initWithId:(NSNumber *)recorderId
+                 videoTrack:(RTCVideoTrack *)videoTrack
            audioInterceptor:(id<RTCAudioRenderer>)audioInterceptor {
     if (self = [super init]) {
         _recorderId = recorderId;
@@ -37,15 +37,14 @@
         _droppedFrameCount = 0;
         _processedFrameCount = 0;
         _completionTimeout = 10.0; // 10 seconds default
-        
         [[NSNotificationCenter defaultCenter] addObserver:self
-                                              selector:@selector(handleMemoryWarning)
-                                                  name:UIApplicationDidReceiveMemoryWarningNotification
-                                                object:nil];
-        
-        NSLog(@"[MediaRecorder-%@] Initialized with videoTrack: %@, audioInterceptor: %@", 
+                                                 selector:@selector(handleMemoryWarning)
+                                                     name:UIApplicationDidReceiveMemoryWarningNotification
+                                                   object:nil];
+
+        NSLog(@"[MediaRecorder-%@] Initialized with videoTrack: %@, audioInterceptor: %@",
               recorderId, videoTrack ? @"YES" : @"NO", audioInterceptor ? @"YES" : @"NO");
-        
+
         if (_videoTrack) {
             [_videoTrack addRenderer:self];
             NSLog(@"[MediaRecorder-%@] Added video track renderer", recorderId);
@@ -54,67 +53,75 @@
     return self;
 }
 
-- (void)startRecording:(NSString*)filePath error:(NSError**)error {
-    NSLog(@"[MediaRecorder-%@] Attempting to start recording to path: %@", _recorderId, filePath);
-    
+- (void)startRecording:(NSString *)filePath
+             withWidth:(NSInteger)width
+            withHeight:(NSInteger)height
+                 error:(NSError **)error {
+    NSLog(@"[MediaRecorder-%@] Attempting to start recording to path: %@ with dimensions: %ldx%ld",
+          _recorderId, filePath, (long)width, (long)height);
     if (_isRecording) {
         NSLog(@"[MediaRecorder-%@] Error: Already recording", _recorderId);
         if (error) {
             *error = [NSError errorWithDomain:@"MediaRecorder"
-                                       code:1
-                                   userInfo:@{NSLocalizedDescriptionKey: @"Already recording"}];
+                                         code:1
+                                     userInfo:@{NSLocalizedDescriptionKey: @"Already recording"}];
         }
         return;
     }
-
     // Validate file path
     if (!filePath || [filePath length] == 0) {
         NSLog(@"[MediaRecorder-%@] Error: Invalid file path", _recorderId);
         if (error) {
             *error = [NSError errorWithDomain:@"MediaRecorder"
-                                       code:2
-                                   userInfo:@{NSLocalizedDescriptionKey: @"Invalid file path"}];
+                                         code:2
+                                     userInfo:@{NSLocalizedDescriptionKey: @"Invalid file path"}];
         }
         return;
     }
-
+    // Validate dimensions
+    if (width <= 0 || height <= 0) {
+        NSLog(@"[MediaRecorder-%@] Error: Invalid dimensions: %ldx%ld", _recorderId, (long)width, (long)height);
+        if (error) {
+            *error = [NSError errorWithDomain:@"MediaRecorder"
+                                         code:8
+                                     userInfo:@{NSLocalizedDescriptionKey: @"Invalid dimensions"}];
+        }
+        return;
+    }
     // Ensure directory exists
-    NSString* directory = [filePath stringByDeletingLastPathComponent];
-    NSFileManager* fileManager = [NSFileManager defaultManager];
+    NSString *directory = [filePath stringByDeletingLastPathComponent];
+    NSFileManager *fileManager = [NSFileManager defaultManager];
     if (![fileManager fileExistsAtPath:directory]) {
-        NSError* dirError = nil;
+        NSError *dirError = nil;
         BOOL created = [fileManager createDirectoryAtPath:directory
-                                withIntermediateDirectories:YES
+                               withIntermediateDirectories:YES
                                                 attributes:nil
-                                                    error:&dirError];
+                                                     error:&dirError];
         if (!created) {
             NSLog(@"[MediaRecorder-%@] Error: Failed to create directory: %@", _recorderId, dirError.localizedDescription);
             if (error) {
                 *error = [NSError errorWithDomain:@"MediaRecorder"
-                                           code:3
-                                       userInfo:@{NSLocalizedDescriptionKey: @"Failed to create directory"}];
+                                             code:3
+                                         userInfo:@{NSLocalizedDescriptionKey: @"Failed to create directory"}];
             }
             return;
         }
     }
-
     // Remove existing file if it exists
     if ([fileManager fileExistsAtPath:filePath]) {
-        NSError* removeError = nil;
+        NSError *removeError = nil;
         if (![fileManager removeItemAtPath:filePath error:&removeError]) {
             NSLog(@"[MediaRecorder-%@] Error: Failed to remove existing file: %@", _recorderId, removeError.localizedDescription);
             if (error) {
                 *error = [NSError errorWithDomain:@"MediaRecorder"
-                                           code:4
-                                       userInfo:@{NSLocalizedDescriptionKey: @"Failed to remove existing file"}];
+                                             code:4
+                                         userInfo:@{NSLocalizedDescriptionKey: @"Failed to remove existing file"}];
             }
             return;
         }
     }
-    
     _filePath = filePath;
-    NSURL* fileURL = [NSURL fileURLWithPath:filePath];
-    
+    NSURL *fileURL = [NSURL fileURLWithPath:filePath];
     _assetWriter = [[AVAssetWriter alloc] initWithURL:fileURL
                                             fileType:AVFileTypeMPEG4
                                                error:error];
@@ -122,58 +129,75 @@
         NSLog(@"[MediaRecorder-%@] Failed to create asset writer: %@", _recorderId, (*error).localizedDescription);
         return;
     }
-
     if (!_videoTrack) {
         NSLog(@"[MediaRecorder-%@] Error: No video track available", _recorderId);
         if (error) {
             *error = [NSError errorWithDomain:@"MediaRecorder"
-                                       code:5
-                                   userInfo:@{NSLocalizedDescriptionKey: @"No video track available"}];
+                                         code:5
+                                     userInfo:@{NSLocalizedDescriptionKey: @"No video track available"}];
         }
         return;
     }
-    
     // Reset statistics
     self.recordingStartTime = [NSDate date];
     self.droppedFrameCount = 0;
     self.processedFrameCount = 0;
-    
-    // Video settings with dynamic dimensions
-    CGSize videoSize = CGSizeMake(1280, 720); // Default size
-    if ([_videoTrack isKindOfClass:[RTCVideoTrack class]]) {
-        // We'll update the dimensions when we receive the first frame
-        // For now, use a common HD resolution as default
-        NSLog(@"[MediaRecorder-%@] Using default video size: %.0fx%.0f", _recorderId, videoSize.width, videoSize.height);
-    }
-    
-    NSDictionary* videoSettings = @{
-        AVVideoCodecKey: AVVideoCodecTypeH264,
-        AVVideoWidthKey: @((NSInteger)videoSize.width),
-        AVVideoHeightKey: @((NSInteger)videoSize.height),
-        AVVideoCompressionPropertiesKey: @{
-            AVVideoAverageBitRateKey: @2000000,
-            AVVideoMaxKeyFrameIntervalKey: @60,
-            AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
+    // Use provided dimensions for video settings
+    NSDictionary *videoSettings = @{
+        AVVideoCodecKey : AVVideoCodecTypeH264,
+        AVVideoWidthKey : @(width),
+        AVVideoHeightKey : @(height),
+        AVVideoCompressionPropertiesKey : @{
+            AVVideoAverageBitRateKey : @2000000,
+            AVVideoMaxKeyFrameIntervalKey : @60,
+            AVVideoProfileLevelKey : AVVideoProfileLevelH264HighAutoLevel
         }
     };
-    
     _videoInput = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeVideo
-                                                outputSettings:videoSettings];
+                                                 outputSettings:videoSettings];
     _videoInput.expectsMediaDataInRealTime = YES;
-    
     if ([_assetWriter canAddInput:_videoInput]) {
         [_assetWriter addInput:_videoInput];
-        NSLog(@"[MediaRecorder-%@] Added video input to asset writer", _recorderId);
+        NSLog(@"[MediaRecorder-%@] Added video input to asset writer with dimensions: %ldx%ld",
+              _recorderId, (long)width, (long)height);
     } else {
         NSLog(@"[MediaRecorder-%@] Error: Could not add video input to asset writer", _recorderId);
         if (error) {
             *error = [NSError errorWithDomain:@"MediaRecorder"
-                                       code:6
-                                   userInfo:@{NSLocalizedDescriptionKey: @"Could not add video input"}];
+                                         code:6
+                                     userInfo:@{NSLocalizedDescriptionKey: @"Could not add video input"}];
         }
         return;
     }
+    // Configure audio settings
+    AudioChannelLayout channelLayout;
+    memset(&channelLayout, 0, sizeof(AudioChannelLayout));
+    channelLayout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo;
     
+    NSDictionary *audioSettings = @{
+        AVFormatIDKey: @(kAudioFormatMPEG4AAC),
+        AVSampleRateKey: @(44100),
+        AVNumberOfChannelsKey: @(2),
+        AVChannelLayoutKey: [NSData dataWithBytes:&channelLayout length:sizeof(AudioChannelLayout)],
+        AVEncoderBitRateKey: @(128000)
+    };
+    
+    _audioInput = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeAudio
+                                                outputSettings:audioSettings];
+    _audioInput.expectsMediaDataInRealTime = YES;
+    
+    if ([_assetWriter canAddInput:_audioInput]) {
+        [_assetWriter addInput:_audioInput];
+        NSLog(@"[MediaRecorder-%@] Added audio input to asset writer", _recorderId);
+    } else {
+        NSLog(@"[MediaRecorder-%@] Error: Could not add audio input to asset writer", _recorderId);
+        if (error) {
+            *error = [NSError errorWithDomain:@"MediaRecorder"
+                                       code:9
+                                   userInfo:@{NSLocalizedDescriptionKey: @"Could not add audio input"}];
+        }
+        return;
+    }
     // Start writing
     if ([_assetWriter startWriting]) {
         [_assetWriter startSessionAtSourceTime:CMTimeMake(0, 1000000000)];
@@ -186,8 +210,8 @@
             *error = _assetWriter.error;
             if (!error) {
                 *error = [NSError errorWithDomain:@"MediaRecorder"
-                                           code:7
-                                       userInfo:@{NSLocalizedDescriptionKey: @"Failed to start recording"}];
+                                             code:7
+                                         userInfo:@{NSLocalizedDescriptionKey: @"Failed to start recording"}];
             }
         }
     }
@@ -195,51 +219,45 @@
 
 - (void)stopRecording {
     NSLog(@"[MediaRecorder-%@] Attempting to stop recording", _recorderId);
-    
     if (!_isRecording) {
         NSLog(@"[MediaRecorder-%@] Warning: Not currently recording", _recorderId);
         return;
     }
-    
     _isRecording = NO;
-    
     if (_videoTrack) {
         [_videoTrack removeRenderer:self];
         NSLog(@"[MediaRecorder-%@] Removed video track renderer", _recorderId);
     }
-    
     [_videoInput markAsFinished];
-    
-    __weak MediaRecorderImpl* weakSelf = self;
+    __weak MediaRecorderImpl *weakSelf = self;
     [_assetWriter finishWritingWithCompletionHandler:^{
-        MediaRecorderImpl* strongSelf = weakSelf;
+        MediaRecorderImpl *strongSelf = weakSelf;
         if (strongSelf) {
             NSLog(@"[MediaRecorder-%@] Successfully finished writing recording", strongSelf.recorderId);
-            
             // Validate and log the recorded file properties
             NSFileManager *fileManager = [NSFileManager defaultManager];
             NSError *error = nil;
             NSDictionary *fileAttributes = [fileManager attributesOfItemAtPath:strongSelf.filePath error:&error];
-            
+
             if (error) {
                 NSLog(@"[MediaRecorder-%@] Error getting file attributes: %@", strongSelf.recorderId, error.localizedDescription);
             } else {
                 unsigned long long fileSize = [fileAttributes fileSize];
                 NSString *fileSizeMB = [NSString stringWithFormat:@"%.2f MB", fileSize / (1024.0 * 1024.0)];
                 NSDate *creationDate = [fileAttributes fileCreationDate];
-                
+
                 // Get video properties using AVAsset
                 AVAsset *asset = [AVAsset assetWithURL:[NSURL fileURLWithPath:strongSelf.filePath]];
                 AVAssetTrack *videoTrack = [[asset tracksWithMediaType:AVMediaTypeVideo] firstObject];
-                
+
                 NSString *dimensions = @"unknown";
                 NSString *duration = @"unknown";
                 NSString *codec = @"unknown";
-                
+
                 if (videoTrack) {
                     CGSize size = videoTrack.naturalSize;
                     dimensions = [NSString stringWithFormat:@"%.0fx%.0f", size.width, size.height];
-                    
+
                     // More accurate duration calculation
                     CMTime actualDuration = videoTrack.timeRange.duration;
                     if (CMTIME_IS_VALID(actualDuration) && !CMTIME_IS_INDEFINITE(actualDuration)) {
@@ -254,7 +272,7 @@
                         duration = @"unknown";
                         NSLog(@"[MediaRecorder-%@] Warning: Could not determine valid duration", strongSelf.recorderId);
                     }
-                    
+
                     // Get video codec
                     NSArray *formatDescriptions = [videoTrack formatDescriptions];
                     if ([formatDescriptions count] > 0) {
@@ -268,7 +286,7 @@
                         codec = [NSString stringWithUTF8String:fourCC];
                     }
                 }
-                
+
                 NSLog(@"[MediaRecorder-%@] Recording validation:", strongSelf.recorderId);
                 NSLog(@"[MediaRecorder-%@] - File path: %@", strongSelf.recorderId, strongSelf.filePath);
                 NSLog(@"[MediaRecorder-%@] - File size: %@", strongSelf.recorderId, fileSizeMB);
@@ -277,24 +295,22 @@
                 NSLog(@"[MediaRecorder-%@] - Duration: %@", strongSelf.recorderId, duration);
                 NSLog(@"[MediaRecorder-%@] - Video codec: %@", strongSelf.recorderId, codec);
             }
-            
+
             strongSelf.assetWriter = nil;
             strongSelf.videoInput = nil;
             strongSelf.audioInput = nil;
-            
+
             dispatch_semaphore_signal(strongSelf.completionSemaphore);
         }
     }];
-    
     // Wait for completion with a timeout
     dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(self.completionTimeout * NSEC_PER_SEC));
     dispatch_semaphore_wait(_completionSemaphore, timeout);
-    
     // Log final statistics
     NSLog(@"[MediaRecorder-%@] Recording stopped. Final stats: %@", _recorderId, [self getRecordingStats]);
 }
 
-- (NSString*)getRecordFilePath {
+- (NSString *)getRecordFilePath {
     return _filePath;
 }
 
@@ -304,7 +320,7 @@
     // Not needed for recording
 }
 
-- (void)renderFrame:(RTCVideoFrame*)frame {
+- (void)renderFrame:(RTCVideoFrame *)frame {
     if (!_isRecording || !_videoInput.isReadyForMoreMediaData) {
         self.droppedFrameCount++;
         if (self.droppedFrameCount % 100 == 0) {
@@ -312,46 +328,40 @@
         }
         return;
     }
-    
     // Validate frame
     if (!frame || frame.width == 0 || frame.height == 0) {
         NSLog(@"[MediaRecorder-%@] Warning: Invalid frame received", _recorderId);
         return;
     }
-    
     // Log frame info periodically
     self.processedFrameCount++;
     if (self.processedFrameCount % 100 == 0) {
-        NSLog(@"[MediaRecorder-%@] Frame stats - Processed: %ld, Dropped: %ld, Size: %.0fx%.0f, Type: %@", 
-              _recorderId, 
+        NSLog(@"[MediaRecorder-%@] Frame stats - Processed: %ld, Dropped: %ld, Size: %.0fx%.0f, Type: %@",
+              _recorderId,
               (long)self.processedFrameCount,
               (long)self.droppedFrameCount,
               frame.width,
               frame.height,
               [frame.buffer isKindOfClass:[RTCCVPixelBuffer class]] ? @"CVPixelBuffer" : @"I420Buffer");
     }
-    
     // Calculate relative timestamp from start of recording
     NSTimeInterval elapsedTime = [[NSDate date] timeIntervalSinceDate:_recordingStartTime];
     CMTime timestamp = CMTimeMakeWithSeconds(elapsedTime, 1000000000);
-    
     CVPixelBufferRef pixelBuffer = NULL;
-    
     if ([frame.buffer isKindOfClass:[RTCCVPixelBuffer class]]) {
         RTCCVPixelBuffer *rtcPixelBuffer = (RTCCVPixelBuffer *)frame.buffer;
         pixelBuffer = rtcPixelBuffer.pixelBuffer;
-        
         // Validate pixel buffer content
         if (pixelBuffer) {
             CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
             void *baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer);
             CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
-            
+
             if (!baseAddress) {
                 NSLog(@"[MediaRecorder-%@] Warning: Empty pixel buffer received", _recorderId);
                 return;
             }
-            
+
             CVPixelBufferRetain(pixelBuffer);
         }
     } else if ([frame.buffer conformsToProtocol:@protocol(RTCI420Buffer)]) {
@@ -362,12 +372,10 @@
         }
         pixelBuffer = [self pixelBufferFromI420Buffer:i420Buffer];
     }
-    
     if (!pixelBuffer) {
         NSLog(@"[MediaRecorder-%@] Warning: Failed to create pixel buffer for frame", _recorderId);
         return;
     }
-    
     dispatch_async(_videoQueue, ^{
         if (self.videoInput.isReadyForMoreMediaData) {
             CMSampleBufferRef sampleBuffer = [self sampleBufferFromPixelBuffer:pixelBuffer
@@ -385,38 +393,32 @@
     CVPixelBufferRef pixelBuffer = NULL;
     int width = i420Buffer.width;
     int height = i420Buffer.height;
-    
     // Create pixel buffer
-    NSDictionary *pixelAttributes = @{(id)kCVPixelBufferIOSurfacePropertiesKey: @{}};
+    NSDictionary *pixelAttributes = @{(id)kCVPixelBufferIOSurfacePropertiesKey : @{}};
     CVReturn result = CVPixelBufferCreate(kCFAllocatorDefault,
-                                        width,
-                                        height,
-                                        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-                                        (__bridge CFDictionaryRef)pixelAttributes,
-                                        &pixelBuffer);
-    
+                                          width,
+                                          height,
+                                          kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                                          (__bridge CFDictionaryRef)pixelAttributes,
+                                          &pixelBuffer);
     if (result != kCVReturnSuccess) {
         NSLog(@"[MediaRecorder-%@] Failed to create pixel buffer: %d", _recorderId, result);
         return NULL;
     }
-    
     // Lock the pixel buffer
     if (CVPixelBufferLockBaseAddress(pixelBuffer, 0) != kCVReturnSuccess) {
         CFRelease(pixelBuffer);
         return NULL;
     }
-    
     // Get the Y plane base address
     uint8_t *dstY = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0);
     const uint8_t *srcY = i420Buffer.dataY;
     const int srcStrideY = i420Buffer.strideY;
     const int dstStrideY = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0);
-    
     // Copy Y plane
     for (int row = 0; row < height; row++) {
         memcpy(dstY + row * dstStrideY, srcY + row * srcStrideY, width);
     }
-    
     // Get UV plane base address
     uint8_t *dstUV = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1);
     const uint8_t *srcU = i420Buffer.dataU;
@@ -424,67 +426,153 @@
     const int srcStrideU = i420Buffer.strideU;
     const int srcStrideV = i420Buffer.strideV;
     const int dstStrideUV = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1);
-    
     // Convert U and V planes from planar to semi-planar (interleaved)
     for (int row = 0; row < height / 2; row++) {
         uint8_t *dstRow = dstUV + row * dstStrideUV;
         const uint8_t *srcURow = srcU + row * srcStrideU;
         const uint8_t *srcVRow = srcV + row * srcStrideV;
-        
         for (int col = 0; col < width / 2; col++) {
             dstRow[col * 2] = srcURow[col];     // U value
             dstRow[col * 2 + 1] = srcVRow[col]; // V value
         }
     }
-    
     // Unlock the pixel buffer
     CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
-    
     return pixelBuffer;
 }
 
 - (CMSampleBufferRef)sampleBufferFromPixelBuffer:(CVPixelBufferRef)pixelBuffer
-                                      timestamp:(CMTime)timestamp {
+                                       timestamp:(CMTime)timestamp {
     CMSampleBufferRef sampleBuffer = NULL;
     CMVideoFormatDescriptionRef videoInfo = NULL;
-    
     CMVideoFormatDescriptionCreateForImageBuffer(NULL, pixelBuffer, &videoInfo);
-    
     CMSampleTimingInfo timing = {CMTimeMake(1, 1000), timestamp, timestamp};
-    
     CMSampleBufferCreateForImageBuffer(kCFAllocatorDefault,
-                                     pixelBuffer,
-                                     true,
-                                     NULL,
-                                     NULL,
-                                     videoInfo,
-                                     &timing,
-                                     &sampleBuffer);
-    
+                                       pixelBuffer,
+                                       true,
+                                       NULL,
+                                       NULL,
+                                       videoInfo,
+                                       &timing,
+                                       &sampleBuffer);
     CFRelease(videoInfo);
     return sampleBuffer;
 }
 
+#pragma mark - RTCAudioRenderer
+
+- (void)renderPCMBuffer:(AVAudioPCMBuffer *)pcmBuffer {
+    if (!_isRecording || !_audioInput.isReadyForMoreMediaData) {
+        return;
+    }
+    
+    CMTime timestamp = CMTimeMakeWithSeconds([[NSDate date] timeIntervalSinceDate:_recordingStartTime],
+                                           1000000000);
+    
+    dispatch_async(_audioQueue, ^{
+        if (self.audioInput.isReadyForMoreMediaData) {
+            // Create audio buffer
+            AudioBufferList audioBufferList;
+            audioBufferList.mNumberBuffers = 1; // AAC expects interleaved stereo
+            audioBufferList.mBuffers[0].mNumberChannels = pcmBuffer.format.channelCount;
+            audioBufferList.mBuffers[0].mDataByteSize = pcmBuffer.frameLength * sizeof(float) * pcmBuffer.format.channelCount;
+            
+            // Allocate temporary buffer for interleaved data
+            float *interleavedData = (float *)malloc(audioBufferList.mBuffers[0].mDataByteSize);
+            if (!interleavedData) {
+                NSLog(@"[MediaRecorder-%@] Failed to allocate memory for audio buffer", self.recorderId);
+                return;
+            }
+            
+            // Interleave the audio data
+            for (UInt32 frame = 0; frame < pcmBuffer.frameLength; frame++) {
+                for (UInt32 channel = 0; channel < pcmBuffer.format.channelCount; channel++) {
+                    float *channelData = pcmBuffer.floatChannelData[channel];
+                    interleavedData[frame * pcmBuffer.format.channelCount + channel] = channelData[frame];
+                }
+            }
+            
+            audioBufferList.mBuffers[0].mData = interleavedData;
+            
+            // Create format description
+            AudioStreamBasicDescription asbd = {0};
+            asbd.mSampleRate = pcmBuffer.format.sampleRate;
+            asbd.mFormatID = kAudioFormatLinearPCM;
+            asbd.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
+            asbd.mBytesPerPacket = sizeof(float) * pcmBuffer.format.channelCount;
+            asbd.mFramesPerPacket = 1;
+            asbd.mBytesPerFrame = sizeof(float) * pcmBuffer.format.channelCount;
+            asbd.mChannelsPerFrame = pcmBuffer.format.channelCount;
+            asbd.mBitsPerChannel = 32;
+            
+            CMFormatDescriptionRef format = NULL;
+            CMAudioFormatDescriptionCreate(kCFAllocatorDefault,
+                                         &asbd,
+                                         0,
+                                         NULL,
+                                         0,
+                                         NULL,
+                                         NULL,
+                                         &format);
+            
+            // Create sample buffer
+            CMSampleBufferRef sampleBuffer = NULL;
+            CMSampleTimingInfo timing = {CMTimeMake(1, 44100), timestamp, timestamp};
+            
+            CMSampleBufferCreate(kCFAllocatorDefault,
+                               NULL,
+                               true,
+                               NULL,
+                               NULL,
+                               format,
+                               pcmBuffer.frameLength,
+                               1,
+                               &timing,
+                               0,
+                               NULL,
+                               &sampleBuffer);
+            
+            if (sampleBuffer) {
+                CMSampleBufferSetDataBufferFromAudioBufferList(sampleBuffer,
+                                                             kCFAllocatorDefault,
+                                                             kCFAllocatorDefault,
+                                                             0,
+                                                             &audioBufferList);
+                
+                [self.audioInput appendSampleBuffer:sampleBuffer];
+                CFRelease(sampleBuffer);
+            }
+            
+            if (format) {
+                CFRelease(format);
+            }
+            
+            // Free the interleaved buffer
+            free(interleavedData);
+        }
+    });
+}
+
 #pragma mark - Statistics and Error Handling
 
-- (void)handleRecordingError:(NSError*)error {
+- (void)handleRecordingError:(NSError *)error {
     if (self.recordingErrorHandler) {
         self.recordingErrorHandler(error);
     }
     [self stopRecording];
 }
 
-- (NSDictionary*)getRecordingStats {
+- (NSDictionary *)getRecordingStats {
     return @{
-        @"processedFrames": @(self.processedFrameCount),
-        @"droppedFrames": @(self.droppedFrameCount),
-        @"duration": @([[NSDate date] timeIntervalSinceDate:self.recordingStartTime]),
-        @"isRecording": @(self.isRecording)
+        @"processedFrames" : @(self.processedFrameCount),
+        @"droppedFrames" : @(self.droppedFrameCount),
+        @"duration" : @([[NSDate date] timeIntervalSinceDate:self.recordingStartTime]),
+        @"isRecording" : @(self.isRecording)
     };
 }
 
 - (void)handleMemoryWarning {
-    NSLog(@"[MediaRecorder-%@] Received memory warning. Current stats: %@", 
+    NSLog(@"[MediaRecorder-%@] Received memory warning. Current stats: %@",
           self.recorderId, [self getRecordingStats]);
 }
 
@@ -497,4 +585,4 @@
     _completionSemaphore = nil;
 }
 
-@end 
+@end

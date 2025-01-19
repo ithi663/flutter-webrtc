@@ -18,7 +18,10 @@ NS_ASSUME_NONNULL_BEGIN
                 videoTrack:(RTCVideoTrack* _Nullable)videoTrack
            audioInterceptor:(id<RTCAudioRenderer> _Nullable)audioInterceptor;
 
-- (void)startRecording:(NSString*)filePath error:(NSError**)error;
+- (void)startRecording:(NSString*)filePath
+            withWidth:(NSInteger)width
+           withHeight:(NSInteger)height
+               error:(NSError**)error;
 - (void)stopRecording;
 - (NSString*)getRecordFilePath;
 
