@@ -537,11 +537,51 @@
             return;
         }
         
-        // Interleave the audio data
+        // Find max amplitude for normalization
+        float maxAmplitude = 0.0f;
+        for (UInt32 channel = 0; channel < pcmBuffer.format.channelCount; channel++) {
+            float *channelData = pcmBuffer.floatChannelData[channel];
+            for (UInt32 frame = 0; frame < pcmBuffer.frameLength; frame++) {
+                float absValue = fabsf(channelData[frame]);
+                if (absValue > maxAmplitude) {
+                    maxAmplitude = absValue;
+                }
+            }
+        }
+        
+        // Calculate normalization factor (reduce volume to avoid distortion)
+        // Using a lower gain to reduce loudness
+        float normalizationFactor = 0.3f; // Reduce volume to 30%
+        if (maxAmplitude > 0.8f) {
+            // If the signal is very loud, reduce it even more
+            normalizationFactor = 0.2f / maxAmplitude;
+        }
+        
+        // Interleave the audio data with normalization and simple noise gate
+        const float noiseGateThreshold = 0.01f; // Threshold for noise gate
+        
         for (UInt32 frame = 0; frame < pcmBuffer.frameLength; frame++) {
             for (UInt32 channel = 0; channel < pcmBuffer.format.channelCount; channel++) {
                 float *channelData = pcmBuffer.floatChannelData[channel];
-                interleavedData[frame * pcmBuffer.format.channelCount + channel] = channelData[frame];
+                float sample = channelData[frame];
+                
+                // Apply noise gate to reduce background noise
+                if (fabsf(sample) < noiseGateThreshold) {
+                    sample = 0.0f;
+                }
+                
+                // Apply normalization to reduce volume
+                sample *= normalizationFactor;
+                
+                // Apply simple low-pass filter to reduce high-frequency noise
+                // (This is a very basic single-pole low-pass filter)
+                static float prevSample[2] = {0.0f, 0.0f}; // For stereo
+                const float alpha = 0.2f; // Filter coefficient (0-1), lower = more filtering
+                
+                sample = alpha * sample + (1.0f - alpha) * prevSample[channel];
+                prevSample[channel] = sample;
+                
+                interleavedData[frame * pcmBuffer.format.channelCount + channel] = sample;
             }
         }
         
@@ -607,25 +647,11 @@
         // Calculate sample size (bytes per frame)
         size_t sampleSize = pcmBuffer.frameLength * sizeof(float) * pcmBuffer.format.channelCount;
         
-        // Create sample buffer with audio format description
-        CMSampleBufferRef sampleBuffer = NULL;
-        
-        // First create a description of the data
-        AudioStreamBasicDescription audioFormat = {0};
-        audioFormat.mSampleRate = pcmBuffer.format.sampleRate;
-        audioFormat.mFormatID = kAudioFormatLinearPCM;
-        audioFormat.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
-        audioFormat.mBytesPerPacket = sizeof(float) * pcmBuffer.format.channelCount;
-        audioFormat.mFramesPerPacket = 1;
-        audioFormat.mBytesPerFrame = sizeof(float) * pcmBuffer.format.channelCount;
-        audioFormat.mChannelsPerFrame = pcmBuffer.format.channelCount;
-        audioFormat.mBitsPerChannel = 32;
-        
         // Create a new audio format description
         CMAudioFormatDescriptionRef audioFormatDescription = NULL;
         status = CMAudioFormatDescriptionCreate(
             kCFAllocatorDefault,
-            &audioFormat,
+            &asbd,
             0, NULL,
             0, NULL,
             NULL,
@@ -639,6 +665,7 @@
         }
         
         // Create a sample buffer
+        CMSampleBufferRef sampleBuffer = NULL;
         status = CMSampleBufferCreate(
             kCFAllocatorDefault,
             blockBuffer,
