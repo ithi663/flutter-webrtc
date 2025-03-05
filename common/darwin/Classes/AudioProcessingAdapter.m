@@ -58,9 +58,14 @@
   os_unfair_lock_unlock(&_lock);
 }
 
-- (AVAudioPCMBuffer*)toPCMBuffer:(RTC_OBJC_TYPE(RTCAudioBuffer) *)audioBuffer {
+- (void)audioProcessingProcess:(RTC_OBJC_TYPE(RTCAudioBuffer) *)audioBuffer {
+  os_unfair_lock_lock(&_lock);
+  for (id<ExternalAudioProcessingDelegate> processor in _processors) {
+    [processor audioProcessingProcess:audioBuffer];
+  }
+  
   AVAudioFormat* format =
-      [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatInt16
+      [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
                                        sampleRate:audioBuffer.frames * 100.0
                                          channels:(AVAudioChannelCount)audioBuffer.channels
                                       interleaved:NO];
@@ -69,27 +74,18 @@
                                     frameCapacity:(AVAudioFrameCount)audioBuffer.frames];
   if (!pcmBuffer) {
     NSLog(@"Failed to create AVAudioPCMBuffer");
-    return nil;
+    os_unfair_lock_unlock(&_lock);
+    return;
   }
   pcmBuffer.frameLength = (AVAudioFrameCount)audioBuffer.frames;
   for (int i = 0; i < audioBuffer.channels; i++) {
     float* sourceBuffer = [audioBuffer rawBufferForChannel:i];
-    int16_t* targetBuffer = (int16_t*)pcmBuffer.int16ChannelData[i];
-    for (int frame = 0; frame < audioBuffer.frames; frame++) {
-      targetBuffer[frame] = sourceBuffer[frame];
-    }
+    float* targetBuffer = pcmBuffer.floatChannelData[i];
+    memcpy(targetBuffer, sourceBuffer, audioBuffer.frames * sizeof(float));
   }
-  return pcmBuffer;
-}
-
-- (void)audioProcessingProcess:(RTC_OBJC_TYPE(RTCAudioBuffer) *)audioBuffer {
-  os_unfair_lock_lock(&_lock);
-  for (id<ExternalAudioProcessingDelegate> processor in _processors) {
-    [processor audioProcessingProcess:audioBuffer];
-  }
-
+  
   for (id<RTCAudioRenderer> renderer in _renderers) {
-    [renderer renderPCMBuffer:[self toPCMBuffer:audioBuffer]];
+    [renderer renderPCMBuffer:pcmBuffer];
   }
   os_unfair_lock_unlock(&_lock);
 }

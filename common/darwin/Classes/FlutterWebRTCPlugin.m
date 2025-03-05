@@ -12,6 +12,8 @@
 #import "FlutterRTCVideoPlatformViewController.h"
 #endif
 #import "AudioManager.h"
+#import "AudioRenderer.h"
+#import <WebRTC/RTCAudioRenderer.h>
 
 #import <AVFoundation/AVFoundation.h>
 #import <WebRTC/RTCFieldTrials.h>
@@ -20,6 +22,11 @@
 #import "LocalTrack.h"
 #import "LocalAudioTrack.h"
 #import "LocalVideoTrack.h"
+
+typedef NS_ENUM(NSInteger, RecorderAudioChannel) {
+    RecorderAudioChannelInput,
+    RecorderAudioChannelOutput
+};
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wprotocol"
@@ -1494,6 +1501,7 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     NSNumber* recorderId = call.arguments[@"recorderId"];
     NSNumber* width = call.arguments[@"width"];
     NSNumber* height = call.arguments[@"height"];
+    NSNumber* audioChannel = call.arguments[@"audioChannel"];
     
     if (!path || !recorderId) {
         result([FlutterError errorWithCode:@"startRecordToFile_error"
@@ -1511,8 +1519,19 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     }
     
     id<RTCAudioRenderer> audioInterceptor = nil;
-    if (call.arguments[@"audioChannel"]) {
-      // TODO: Implement audio recording if needed
+    RecorderAudioChannel channel = RecorderAudioChannelOutput;  // Default value
+    if (audioChannel) {
+      channel = [audioChannel intValue];
+      switch (channel) {
+        case RecorderAudioChannelInput:
+          audioInterceptor = [[AudioRenderer alloc] init];
+          [AudioManager.sharedInstance.capturePostProcessingAdapter addAudioRenderer:audioInterceptor];
+          break;
+        case RecorderAudioChannelOutput:
+          audioInterceptor = [[AudioRenderer alloc] init];
+          [AudioManager.sharedInstance.renderPreProcessingAdapter addAudioRenderer:audioInterceptor];
+          break;
+      }
     }
     
     if (!videoTrack && !audioInterceptor) {
@@ -1533,6 +1552,13 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
                     error:&error];
     
     if (error) {
+        if (audioInterceptor) {
+            if (channel == RecorderAudioChannelInput) {
+                [AudioManager.sharedInstance.capturePostProcessingAdapter removeAudioRenderer:audioInterceptor];
+            } else {
+                [AudioManager.sharedInstance.renderPreProcessingAdapter removeAudioRenderer:audioInterceptor];
+            }
+        }
         NSString* errorMessage = error.localizedDescription;
         if (error.userInfo[NSLocalizedDescriptionKey]) {
             errorMessage = error.userInfo[NSLocalizedDescriptionKey];

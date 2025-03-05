@@ -26,7 +26,6 @@ import io.flutter.embedding.engine.plugins.lifecycle.HiddenLifecycleReference;
 import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.MethodChannel;
-import io.flutter.plugin.common.PluginRegistry.Registrar;
 import io.flutter.view.TextureRegistry;
 
 /**
@@ -66,30 +65,11 @@ public class FlutterWebRTCPlugin implements FlutterPlugin, ActivityAware, EventC
         return methodCallHandler.getRemoteTrack(trackId);
     }
 
-    /**
-     * Plugin registration.
-     */
-    public static void registerWith(Registrar registrar) {
-        final FlutterWebRTCPlugin plugin = new FlutterWebRTCPlugin();
-
-        plugin.startListening(registrar.context(), registrar.messenger(), registrar.textures());
-
-        if (registrar.activeContext() instanceof Activity) {
-            plugin.methodCallHandler.setActivity((Activity) registrar.activeContext());
-        }
-        application = ((Application) registrar.context().getApplicationContext());
-        application.registerActivityLifecycleCallbacks(plugin.observer);
-
-        registrar.addViewDestroyListener(view -> {
-            plugin.stopListening();
-            return false;
-        });
-    }
-
     @Override
     public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
         startListening(binding.getApplicationContext(), binding.getBinaryMessenger(),
                 binding.getTextureRegistry());
+        application = (Application) binding.getApplicationContext();
     }
 
     @Override
@@ -103,6 +83,9 @@ public class FlutterWebRTCPlugin implements FlutterPlugin, ActivityAware, EventC
         this.observer = new LifeCycleObserver();
         this.lifecycle = ((HiddenLifecycleReference) binding.getLifecycle()).getLifecycle();
         this.lifecycle.addObserver(this.observer);
+        if (application != null) {
+            application.registerActivityLifecycleCallbacks(this.observer);
+        }
     }
 
     @Override
@@ -120,7 +103,7 @@ public class FlutterWebRTCPlugin implements FlutterPlugin, ActivityAware, EventC
         methodCallHandler.setActivity(null);
         if (this.observer != null) {
             this.lifecycle.removeObserver(this.observer);
-            if (application!=null) {
+            if (application != null) {
                 application.unregisterActivityLifecycleCallbacks(this.observer);
             }
         }
@@ -133,10 +116,10 @@ public class FlutterWebRTCPlugin implements FlutterPlugin, ActivityAware, EventC
         methodCallHandler = new MethodCallHandlerImpl(context, messenger, textureRegistry);
         methodChannel = new MethodChannel(messenger, "FlutterWebRTC.Method");
         methodChannel.setMethodCallHandler(methodCallHandler);
-        eventChannel = new EventChannel( messenger,"FlutterWebRTC.Event");
+        eventChannel = new EventChannel(messenger, "FlutterWebRTC.Event");
         eventChannel.setStreamHandler(this);
         AudioSwitchManager.instance.audioDeviceChangeListener = (devices, currentDevice) -> {
-            Log.w(TAG, "audioFocusChangeListener " + devices+ " " + currentDevice);
+            Log.w(TAG, "audioFocusChangeListener " + devices + " " + currentDevice);
             ConstraintsMap params = new ConstraintsMap();
             params.putString("event", "onDeviceChange");
             sendEvent(params.toMap());
@@ -159,6 +142,7 @@ public class FlutterWebRTCPlugin implements FlutterPlugin, ActivityAware, EventC
     public void onListen(Object arguments, EventChannel.EventSink events) {
         eventSink = new AnyThreadSink(events);
     }
+
     @Override
     public void onCancel(Object arguments) {
         eventSink = null;
@@ -173,14 +157,10 @@ public class FlutterWebRTCPlugin implements FlutterPlugin, ActivityAware, EventC
     private class LifeCycleObserver implements Application.ActivityLifecycleCallbacks, DefaultLifecycleObserver {
 
         @Override
-        public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
-
-        }
+        public void onActivityCreated(Activity activity, Bundle savedInstanceState) {}
 
         @Override
-        public void onActivityStarted(Activity activity) {
-
-        }
+        public void onActivityStarted(Activity activity) {}
 
         @Override
         public void onActivityResumed(Activity activity) {
@@ -197,23 +177,15 @@ public class FlutterWebRTCPlugin implements FlutterPlugin, ActivityAware, EventC
         }
 
         @Override
-        public void onActivityPaused(Activity activity) {
-
-        }
+        public void onActivityPaused(Activity activity) {}
 
         @Override
-        public void onActivityStopped(Activity activity) {
-
-        }
+        public void onActivityStopped(Activity activity) {}
 
         @Override
-        public void onActivitySaveInstanceState(Activity activity, Bundle outState) {
-
-        }
+        public void onActivitySaveInstanceState(Activity activity, Bundle outState) {}
 
         @Override
-        public void onActivityDestroyed(Activity activity) {
-
-        }
+        public void onActivityDestroyed(Activity activity) {}
     }
 }
