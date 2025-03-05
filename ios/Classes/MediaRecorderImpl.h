@@ -13,6 +13,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property(nonatomic, readonly) NSString* filePath;
 @property(nonatomic, readonly) BOOL isRecording;
+@property(nonatomic, readonly) id<RTCAudioRenderer> _Nullable audioInterceptor;
 
 - (instancetype)initWithId:(NSNumber*)recorderId
                 videoTrack:(RTCVideoTrack* _Nullable)videoTrack
@@ -24,6 +25,9 @@ NS_ASSUME_NONNULL_BEGIN
                error:(NSError**)error;
 - (void)stopRecording;
 - (NSString*)getRecordFilePath;
+
+// Add method to handle audio PCM buffer from AudioRenderer
+- (void)renderPCMBuffer:(AVAudioPCMBuffer *)pcmBuffer;
 
 @end
 

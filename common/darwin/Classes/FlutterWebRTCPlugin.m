@@ -1503,7 +1503,11 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     NSNumber* height = call.arguments[@"height"];
     NSNumber* audioChannel = call.arguments[@"audioChannel"];
     
+    NSLog(@"[FlutterWebRTC] startRecordToFile called with path: %@, videoTrackId: %@, recorderId: %@, audioChannel: %@",
+          path, videoTrackId, recorderId, audioChannel);
+    
     if (!path || !recorderId) {
+        NSLog(@"[FlutterWebRTC] Error: Invalid arguments - path: %@, recorderId: %@", path, recorderId);
         result([FlutterError errorWithCode:@"startRecordToFile_error"
                                  message:@"Invalid arguments: path and recorderId are required"
                                  details:nil]);
@@ -1515,26 +1519,38 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
       RTCMediaStreamTrack* track = [self trackForId:videoTrackId peerConnectionId:peerConnectionId];
       if ([track isKindOfClass:[RTCVideoTrack class]]) {
         videoTrack = (RTCVideoTrack*)track;
+        NSLog(@"[FlutterWebRTC] Found video track with ID: %@", videoTrackId);
+      } else {
+        NSLog(@"[FlutterWebRTC] Warning: Track with ID %@ is not a video track", videoTrackId);
       }
+    } else {
+      NSLog(@"[FlutterWebRTC] No videoTrackId provided");
     }
     
     id<RTCAudioRenderer> audioInterceptor = nil;
     RecorderAudioChannel channel = RecorderAudioChannelOutput;  // Default value
     if (audioChannel) {
       channel = [audioChannel intValue];
+      NSLog(@"[FlutterWebRTC] Setting up audio interceptor for channel: %d", (int)channel);
+      
       switch (channel) {
         case RecorderAudioChannelInput:
           audioInterceptor = [[AudioRenderer alloc] init];
           [AudioManager.sharedInstance.capturePostProcessingAdapter addAudioRenderer:audioInterceptor];
+          NSLog(@"[FlutterWebRTC] Added audio interceptor to capture post-processing adapter");
           break;
         case RecorderAudioChannelOutput:
           audioInterceptor = [[AudioRenderer alloc] init];
           [AudioManager.sharedInstance.renderPreProcessingAdapter addAudioRenderer:audioInterceptor];
+          NSLog(@"[FlutterWebRTC] Added audio interceptor to render pre-processing adapter");
           break;
       }
+    } else {
+      NSLog(@"[FlutterWebRTC] No audioChannel provided, audio will not be recorded");
     }
     
     if (!videoTrack && !audioInterceptor) {
+        NSLog(@"[FlutterWebRTC] Error: No valid video or audio track found");
         result([FlutterError errorWithCode:@"startRecordToFile_error"
                                  message:@"No valid video or audio track found"
                                  details:nil]);
@@ -1545,6 +1561,12 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
                                                          videoTrack:videoTrack
                                                     audioInterceptor:audioInterceptor];
     
+    // Set the recorder on the audio interceptor
+    if (audioInterceptor) {
+        [(AudioRenderer *)audioInterceptor setRecorder:recorder];
+        NSLog(@"[FlutterWebRTC] Set recorder on audio interceptor");
+    }
+    
     NSError* error = nil;
     [recorder startRecording:path
                  withWidth:width ? [width integerValue] : 0
@@ -1552,11 +1574,17 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
                     error:&error];
     
     if (error) {
+        NSLog(@"[FlutterWebRTC] Error starting recording: %@", error.localizedDescription);
         if (audioInterceptor) {
+            // Clear the recorder reference before removing the audio interceptor
+            [(AudioRenderer *)audioInterceptor clearRecorder];
+            
             if (channel == RecorderAudioChannelInput) {
                 [AudioManager.sharedInstance.capturePostProcessingAdapter removeAudioRenderer:audioInterceptor];
+                NSLog(@"[FlutterWebRTC] Removed audio interceptor from capture post-processing adapter");
             } else {
                 [AudioManager.sharedInstance.renderPreProcessingAdapter removeAudioRenderer:audioInterceptor];
+                NSLog(@"[FlutterWebRTC] Removed audio interceptor from render pre-processing adapter");
             }
         }
         NSString* errorMessage = error.localizedDescription;
@@ -1570,16 +1598,32 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     }
     
     [self.recorders setObject:recorder forKey:recorderId];
+    NSLog(@"[FlutterWebRTC] Successfully started recording with ID: %@", recorderId);
     result(nil);
   } else if ([@"stopRecordToFile" isEqualToString:call.method]) {
     NSNumber* recorderId = call.arguments[@"recorderId"];
+    NSLog(@"[FlutterWebRTC] stopRecordToFile called with recorderId: %@", recorderId);
+    
     MediaRecorderImpl* recorder = [self.recorders objectForKey:recorderId];
     
     if (recorder) {
+      NSLog(@"[FlutterWebRTC] Found recorder with ID: %@", recorderId);
+      
+      // Get the audio interceptor from the recorder and clear the recorder reference
+      id<RTCAudioRenderer> audioInterceptor = [recorder audioInterceptor];
+      if (audioInterceptor && [audioInterceptor isKindOfClass:[AudioRenderer class]]) {
+        [(AudioRenderer *)audioInterceptor clearRecorder];
+        NSLog(@"[FlutterWebRTC] Cleared recorder reference from audio interceptor");
+      } else {
+        NSLog(@"[FlutterWebRTC] No audio interceptor found or not of AudioRenderer class");
+      }
+      
       [recorder stopRecording];
       [self.recorders removeObjectForKey:recorderId];
+      NSLog(@"[FlutterWebRTC] Successfully stopped recording with ID: %@", recorderId);
       result(nil);
     } else {
+      NSLog(@"[FlutterWebRTC] Error: Recorder with ID %@ not found", recorderId);
       result([FlutterError errorWithCode:@"stopRecordToFile_error"
                                message:@"Recorder not found"
                                details:nil]);

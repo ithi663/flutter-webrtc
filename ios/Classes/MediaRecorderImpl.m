@@ -57,8 +57,9 @@
              withWidth:(NSInteger)width
             withHeight:(NSInteger)height
                  error:(NSError **)error {
-    NSLog(@"[MediaRecorder-%@] Attempting to start recording to path: %@ with dimensions: %ldx%ld",
-          _recorderId, filePath, (long)width, (long)height);
+    NSLog(@"[MediaRecorder-%@] Attempting to start recording to path: %@ with dimensions: %ldx%ld, videoTrack: %@, audioInterceptor: %@",
+          _recorderId, filePath, (long)width, (long)height, _videoTrack ? @"YES" : @"NO", _audioInterceptor ? @"YES" : @"NO");
+    
     if (_isRecording) {
         NSLog(@"[MediaRecorder-%@] Error: Already recording", _recorderId);
         if (error) {
@@ -182,15 +183,18 @@
         AVEncoderBitRateKey: @(128000)
     };
     
+    NSLog(@"[MediaRecorder-%@] Configuring audio with settings: %@", _recorderId, audioSettings);
+    
     _audioInput = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeAudio
                                                 outputSettings:audioSettings];
     _audioInput.expectsMediaDataInRealTime = YES;
     
     if ([_assetWriter canAddInput:_audioInput]) {
         [_assetWriter addInput:_audioInput];
-        NSLog(@"[MediaRecorder-%@] Added audio input to asset writer", _recorderId);
+        NSLog(@"[MediaRecorder-%@] Successfully added audio input to asset writer", _recorderId);
     } else {
-        NSLog(@"[MediaRecorder-%@] Error: Could not add audio input to asset writer", _recorderId);
+        NSLog(@"[MediaRecorder-%@] Error: Could not add audio input to asset writer. Error: %@", 
+              _recorderId, _assetWriter.error ? _assetWriter.error.localizedDescription : @"Unknown error");
         if (error) {
             *error = [NSError errorWithDomain:@"MediaRecorder"
                                        code:9
@@ -218,17 +222,31 @@
 }
 
 - (void)stopRecording {
-    NSLog(@"[MediaRecorder-%@] Attempting to stop recording", _recorderId);
+    NSLog(@"[MediaRecorder-%@] Attempting to stop recording. Current state - isRecording: %@, videoTrack: %@, audioInterceptor: %@",
+          _recorderId, _isRecording ? @"YES" : @"NO", _videoTrack ? @"YES" : @"NO", _audioInterceptor ? @"YES" : @"NO");
+    
     if (!_isRecording) {
         NSLog(@"[MediaRecorder-%@] Warning: Not currently recording", _recorderId);
         return;
     }
+    
     _isRecording = NO;
+    
     if (_videoTrack) {
         [_videoTrack removeRenderer:self];
         NSLog(@"[MediaRecorder-%@] Removed video track renderer", _recorderId);
     }
-    [_videoInput markAsFinished];
+    
+    if (_videoInput) {
+        [_videoInput markAsFinished];
+        NSLog(@"[MediaRecorder-%@] Marked video input as finished", _recorderId);
+    }
+    
+    if (_audioInput) {
+        [_audioInput markAsFinished];
+        NSLog(@"[MediaRecorder-%@] Marked audio input as finished", _recorderId);
+    }
+    
     __weak MediaRecorderImpl *weakSelf = self;
     [_assetWriter finishWritingWithCompletionHandler:^{
         MediaRecorderImpl *strongSelf = weakSelf;
@@ -462,94 +480,208 @@
 #pragma mark - RTCAudioRenderer
 
 - (void)renderPCMBuffer:(AVAudioPCMBuffer *)pcmBuffer {
-    if (!_isRecording || !_audioInput.isReadyForMoreMediaData) {
+    static NSInteger audioBufferCounter = 0;
+    audioBufferCounter++;
+    
+    if (!_isRecording) {
+        if (audioBufferCounter % 100 == 0) {
+            NSLog(@"[MediaRecorder-%@] Warning: Received audio buffer #%ld but not recording", _recorderId, (long)audioBufferCounter);
+        }
         return;
+    }
+    
+    if (!_audioInput) {
+        if (audioBufferCounter % 100 == 0) {
+            NSLog(@"[MediaRecorder-%@] Error: Audio input is nil. Buffer #%ld dropped", _recorderId, (long)audioBufferCounter);
+        }
+        return;
+    }
+    
+    if (!_audioInput.isReadyForMoreMediaData) {
+        if (audioBufferCounter % 100 == 0) {
+            NSLog(@"[MediaRecorder-%@] Warning: Audio input not ready for more data. Buffer #%ld dropped", _recorderId, (long)audioBufferCounter);
+        }
+        return;
+    }
+    
+    if (audioBufferCounter % 100 == 0) {
+        NSLog(@"[MediaRecorder-%@] Processing audio buffer #%ld - Channels: %d, Sample Rate: %.0f Hz, Frame Length: %d", 
+              _recorderId, 
+              (long)audioBufferCounter,
+              (int)pcmBuffer.format.channelCount,
+              pcmBuffer.format.sampleRate,
+              (int)pcmBuffer.frameLength);
     }
     
     CMTime timestamp = CMTimeMakeWithSeconds([[NSDate date] timeIntervalSinceDate:_recordingStartTime],
                                            1000000000);
     
     dispatch_async(_audioQueue, ^{
-        if (self.audioInput.isReadyForMoreMediaData) {
-            // Create audio buffer
-            AudioBufferList audioBufferList;
-            audioBufferList.mNumberBuffers = 1; // AAC expects interleaved stereo
-            audioBufferList.mBuffers[0].mNumberChannels = pcmBuffer.format.channelCount;
-            audioBufferList.mBuffers[0].mDataByteSize = pcmBuffer.frameLength * sizeof(float) * pcmBuffer.format.channelCount;
-            
-            // Allocate temporary buffer for interleaved data
-            float *interleavedData = (float *)malloc(audioBufferList.mBuffers[0].mDataByteSize);
-            if (!interleavedData) {
-                NSLog(@"[MediaRecorder-%@] Failed to allocate memory for audio buffer", self.recorderId);
-                return;
+        if (!self.audioInput.isReadyForMoreMediaData) {
+            if (audioBufferCounter % 100 == 0) {
+                NSLog(@"[MediaRecorder-%@] Warning: Audio input not ready in async queue. Buffer #%ld dropped", self.recorderId, (long)audioBufferCounter);
             }
-            
-            // Interleave the audio data
-            for (UInt32 frame = 0; frame < pcmBuffer.frameLength; frame++) {
-                for (UInt32 channel = 0; channel < pcmBuffer.format.channelCount; channel++) {
-                    float *channelData = pcmBuffer.floatChannelData[channel];
-                    interleavedData[frame * pcmBuffer.format.channelCount + channel] = channelData[frame];
-                }
-            }
-            
-            audioBufferList.mBuffers[0].mData = interleavedData;
-            
-            // Create format description
-            AudioStreamBasicDescription asbd = {0};
-            asbd.mSampleRate = pcmBuffer.format.sampleRate;
-            asbd.mFormatID = kAudioFormatLinearPCM;
-            asbd.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
-            asbd.mBytesPerPacket = sizeof(float) * pcmBuffer.format.channelCount;
-            asbd.mFramesPerPacket = 1;
-            asbd.mBytesPerFrame = sizeof(float) * pcmBuffer.format.channelCount;
-            asbd.mChannelsPerFrame = pcmBuffer.format.channelCount;
-            asbd.mBitsPerChannel = 32;
-            
-            CMFormatDescriptionRef format = NULL;
-            CMAudioFormatDescriptionCreate(kCFAllocatorDefault,
-                                         &asbd,
-                                         0,
-                                         NULL,
-                                         0,
-                                         NULL,
-                                         NULL,
-                                         &format);
-            
-            // Create sample buffer
-            CMSampleBufferRef sampleBuffer = NULL;
-            CMSampleTimingInfo timing = {CMTimeMake(1, 44100), timestamp, timestamp};
-            
-            CMSampleBufferCreate(kCFAllocatorDefault,
-                               NULL,
-                               true,
-                               NULL,
-                               NULL,
-                               format,
-                               pcmBuffer.frameLength,
-                               1,
-                               &timing,
-                               0,
-                               NULL,
-                               &sampleBuffer);
-            
-            if (sampleBuffer) {
-                CMSampleBufferSetDataBufferFromAudioBufferList(sampleBuffer,
-                                                             kCFAllocatorDefault,
-                                                             kCFAllocatorDefault,
-                                                             0,
-                                                             &audioBufferList);
-                
-                [self.audioInput appendSampleBuffer:sampleBuffer];
-                CFRelease(sampleBuffer);
-            }
-            
-            if (format) {
-                CFRelease(format);
-            }
-            
-            // Free the interleaved buffer
-            free(interleavedData);
+            return;
         }
+        
+        // Create audio buffer
+        AudioBufferList audioBufferList;
+        audioBufferList.mNumberBuffers = 1; // AAC expects interleaved stereo
+        audioBufferList.mBuffers[0].mNumberChannels = pcmBuffer.format.channelCount;
+        audioBufferList.mBuffers[0].mDataByteSize = pcmBuffer.frameLength * sizeof(float) * pcmBuffer.format.channelCount;
+        
+        // Allocate temporary buffer for interleaved data
+        float *interleavedData = (float *)malloc(audioBufferList.mBuffers[0].mDataByteSize);
+        if (!interleavedData) {
+            NSLog(@"[MediaRecorder-%@] Error: Failed to allocate memory for audio buffer #%ld", self.recorderId, (long)audioBufferCounter);
+            return;
+        }
+        
+        // Interleave the audio data
+        for (UInt32 frame = 0; frame < pcmBuffer.frameLength; frame++) {
+            for (UInt32 channel = 0; channel < pcmBuffer.format.channelCount; channel++) {
+                float *channelData = pcmBuffer.floatChannelData[channel];
+                interleavedData[frame * pcmBuffer.format.channelCount + channel] = channelData[frame];
+            }
+        }
+        
+        audioBufferList.mBuffers[0].mData = interleavedData;
+        
+        // Create format description
+        AudioStreamBasicDescription asbd = {0};
+        asbd.mSampleRate = pcmBuffer.format.sampleRate;
+        asbd.mFormatID = kAudioFormatLinearPCM;
+        asbd.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
+        asbd.mBytesPerPacket = sizeof(float) * pcmBuffer.format.channelCount;
+        asbd.mFramesPerPacket = 1;
+        asbd.mBytesPerFrame = sizeof(float) * pcmBuffer.format.channelCount;
+        asbd.mChannelsPerFrame = pcmBuffer.format.channelCount;
+        asbd.mBitsPerChannel = 32;
+        
+        // Create format description
+        CMFormatDescriptionRef format = NULL;
+        OSStatus status = CMAudioFormatDescriptionCreate(kCFAllocatorDefault,
+                                                      &asbd,
+                                                      0,
+                                                      NULL,
+                                                      0,
+                                                      NULL,
+                                                      NULL,
+                                                      &format);
+        
+        if (status != noErr) {
+            NSLog(@"[MediaRecorder-%@] Error: Failed to create audio format description: %d", self.recorderId, (int)status);
+            free(interleavedData);
+            return;
+        }
+        
+        // Create a block buffer for the audio data
+        CMBlockBufferRef blockBuffer = NULL;
+        status = CMBlockBufferCreateWithMemoryBlock(
+            kCFAllocatorDefault,
+            interleavedData,
+            audioBufferList.mBuffers[0].mDataByteSize,
+            kCFAllocatorDefault,
+            NULL,
+            0,
+            audioBufferList.mBuffers[0].mDataByteSize,
+            0,
+            &blockBuffer);
+        
+        if (status != noErr) {
+            NSLog(@"[MediaRecorder-%@] Error: Failed to create block buffer: %d", self.recorderId, (int)status);
+            CFRelease(format);
+            free(interleavedData);
+            return;
+        }
+        
+        // Calculate the correct duration for the sample buffer
+        CMTime duration = CMTimeMake(pcmBuffer.frameLength, (int32_t)pcmBuffer.format.sampleRate);
+        
+        // Create timing info
+        CMSampleTimingInfo timing;
+        timing.duration = duration;
+        timing.presentationTimeStamp = timestamp;
+        timing.decodeTimeStamp = kCMTimeInvalid;
+        
+        // Calculate sample size (bytes per frame)
+        size_t sampleSize = pcmBuffer.frameLength * sizeof(float) * pcmBuffer.format.channelCount;
+        
+        // Create sample buffer with audio format description
+        CMSampleBufferRef sampleBuffer = NULL;
+        
+        // First create a description of the data
+        AudioStreamBasicDescription audioFormat = {0};
+        audioFormat.mSampleRate = pcmBuffer.format.sampleRate;
+        audioFormat.mFormatID = kAudioFormatLinearPCM;
+        audioFormat.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
+        audioFormat.mBytesPerPacket = sizeof(float) * pcmBuffer.format.channelCount;
+        audioFormat.mFramesPerPacket = 1;
+        audioFormat.mBytesPerFrame = sizeof(float) * pcmBuffer.format.channelCount;
+        audioFormat.mChannelsPerFrame = pcmBuffer.format.channelCount;
+        audioFormat.mBitsPerChannel = 32;
+        
+        // Create a new audio format description
+        CMAudioFormatDescriptionRef audioFormatDescription = NULL;
+        status = CMAudioFormatDescriptionCreate(
+            kCFAllocatorDefault,
+            &audioFormat,
+            0, NULL,
+            0, NULL,
+            NULL,
+            &audioFormatDescription);
+        
+        if (status != noErr) {
+            NSLog(@"[MediaRecorder-%@] Error: Failed to create audio format description: %d", self.recorderId, (int)status);
+            CFRelease(blockBuffer);
+            free(interleavedData);
+            return;
+        }
+        
+        // Create a sample buffer
+        status = CMSampleBufferCreate(
+            kCFAllocatorDefault,
+            blockBuffer,
+            true,
+            NULL,
+            NULL,
+            audioFormatDescription,
+            1, // numSamples
+            1, // numSampleTimingEntries
+            &timing,
+            1, // numSampleSizeEntries
+            &sampleSize,
+            &sampleBuffer);
+        
+        if (status != noErr) {
+            NSLog(@"[MediaRecorder-%@] Error: Failed to create sample buffer: %d", self.recorderId, (int)status);
+            CFRelease(audioFormatDescription);
+            CFRelease(blockBuffer);
+            free(interleavedData);
+            return;
+        }
+        
+        // Append the sample buffer to the audio input
+        if (sampleBuffer) {
+            if ([self.audioInput appendSampleBuffer:sampleBuffer]) {
+                if (audioBufferCounter % 100 == 0) {
+                    NSLog(@"[MediaRecorder-%@] Successfully appended audio buffer #%ld", self.recorderId, (long)audioBufferCounter);
+                }
+            } else {
+                NSLog(@"[MediaRecorder-%@] Failed to append audio buffer #%ld", self.recorderId, (long)audioBufferCounter);
+            }
+            CFRelease(sampleBuffer);
+        }
+        
+        if (audioFormatDescription) {
+            CFRelease(audioFormatDescription);
+        }
+        
+        if (blockBuffer) {
+            CFRelease(blockBuffer);
+        }
+        
+        // Note: We don't need to free interleavedData here because it's now owned by the block buffer
     });
 }
 
