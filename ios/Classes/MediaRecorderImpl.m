@@ -18,6 +18,7 @@
 @property (nonatomic, strong) NSDate *recordingStartTime;
 @property (nonatomic, assign) NSTimeInterval completionTimeout;
 @property (nonatomic, copy) void (^recordingErrorHandler)(NSError *error);
+@property (nonatomic, assign) BOOL useVoiceProcessing;
 
 @end
 
@@ -37,6 +38,8 @@
         _droppedFrameCount = 0;
         _processedFrameCount = 0;
         _completionTimeout = 10.0; // 10 seconds default
+        _useVoiceProcessing = YES; // Enable voice processing by default
+        
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(handleMemoryWarning)
                                                      name:UIApplicationDidReceiveMemoryWarningNotification
@@ -557,30 +560,20 @@
             normalizationFactor = 0.2f / maxAmplitude;
         }
         
-        // Interleave the audio data with normalization and simple noise gate
-        const float noiseGateThreshold = 0.01f; // Threshold for noise gate
+        // Process audio samples - with iOS built-in noise reduction already applied
+        // Note: When using RTCAudioRenderer, the audio has already been processed by WebRTC's
+        // audio processing module which includes noise suppression, so we just need to
+        // apply normalization and prepare the audio for recording
         
         for (UInt32 frame = 0; frame < pcmBuffer.frameLength; frame++) {
             for (UInt32 channel = 0; channel < pcmBuffer.format.channelCount; channel++) {
                 float *channelData = pcmBuffer.floatChannelData[channel];
                 float sample = channelData[frame];
                 
-                // Apply noise gate to reduce background noise
-                if (fabsf(sample) < noiseGateThreshold) {
-                    sample = 0.0f;
-                }
-                
                 // Apply normalization to reduce volume
                 sample *= normalizationFactor;
                 
-                // Apply simple low-pass filter to reduce high-frequency noise
-                // (This is a very basic single-pole low-pass filter)
-                static float prevSample[2] = {0.0f, 0.0f}; // For stereo
-                const float alpha = 0.2f; // Filter coefficient (0-1), lower = more filtering
-                
-                sample = alpha * sample + (1.0f - alpha) * prevSample[channel];
-                prevSample[channel] = sample;
-                
+                // Store the processed sample
                 interleavedData[frame * pcmBuffer.format.channelCount + channel] = sample;
             }
         }
