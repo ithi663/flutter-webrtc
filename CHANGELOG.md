@@ -1,6 +1,39 @@
+
 # Changelog
 
---------------------------------------------
+[0.12.12] - 2025-03-09
+
+* [Android] feat: Migrate to the new Surface API. (#1726)
+* [Chore] chore: fix sponsors logo and links.
+
+[0.12.11] - 2025-02-23
+
+* [web] bump version for dart_webrtc.
+* [web] fix: compile error for web with --wasm.
+
+[0.12.10] - 2025-02-18
+
+* [web] bump version for dart_webrtc.
+* [web] fix: compile error for web with --wasm.
+
+[0.12.9] - 2025-02-13
+
+* [iOS] feat: Add option to start capture without broadcast picker (#1764)
+
+[0.12.8] - 2025-02-07
+
+* [Dart] feat: expose rtc video value (#1754)
+* [Dart] chore: bump webrtc-interface to 1.2.1.
+  
+[0.12.7] - 2025-01-24
+
+* [iOS] More robustness for video renderer. (#1751)
+
+[0.12.6] - 2025-01-20
+
+* [iOS] fix In-app screen recording.
+* [Android] fix: avoid crashes when surfaceTextureHelper is null. (#1743)
+
 [0.12.5+hotfix.2] - 2024-12-25
 
 * [iOS] fix: Audio route issue for iOS.
@@ -61,7 +94,6 @@
 * [Web] change VideoElement to HTMLVideoElement.
 * [iOS] added shared singleton for FlutterWebRTCPlugin (#1634)
 * [iOS] Using av samplebuffer for PlatformView (#1635)
-
 
 [0.11.5] - 2024-07-23
 

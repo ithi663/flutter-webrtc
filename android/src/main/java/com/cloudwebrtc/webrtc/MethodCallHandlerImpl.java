@@ -14,6 +14,7 @@ import android.media.AudioDeviceInfo;
 import android.os.Build;
 import android.util.Log;
 import android.util.LongSparseArray;
+import android.view.Surface;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -207,10 +208,11 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
                         .setUseStereoOutput(true)
                         .setAudioSource(MediaRecorder.AudioSource.MIC);
     } else {
-      audioDeviceModuleBuilder.setUseHardwareAcousticEchoCanceler(true)
-                        .setUseLowLatency(true)
-                        .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-                        .setUseHardwareNoiseSuppressor(true);
+      boolean useHardwareAudioProcessing = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
+      boolean useLowLatency = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O;
+      audioDeviceModuleBuilder.setUseHardwareAcousticEchoCanceler(useHardwareAudioProcessing)
+                        .setUseLowLatency(useLowLatency)
+                        .setUseHardwareNoiseSuppressor(useHardwareAudioProcessing);
     }
 
     audioDeviceModuleBuilder.setSamplesReadyCallback(recordSamplesReadyCallbackAdapter);
@@ -564,22 +566,21 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
         break;
       }
       case "createVideoRenderer": {
-        SurfaceTextureEntry entry = textures.createSurfaceTexture();
-        SurfaceTexture surfaceTexture = entry.surfaceTexture();
-        FlutterRTCVideoRenderer render = new FlutterRTCVideoRenderer(surfaceTexture, entry);
-        renders.put(entry.id(), render);
+        TextureRegistry.SurfaceProducer producer = textures.createSurfaceProducer();
+        FlutterRTCVideoRenderer render = new FlutterRTCVideoRenderer(producer);
+        renders.put(producer.id(), render);
 
         EventChannel eventChannel =
                 new EventChannel(
                         messenger,
-                        "FlutterWebRTC/Texture" + entry.id());
+                        "FlutterWebRTC/Texture" + producer.id());
 
         eventChannel.setStreamHandler(render);
         render.setEventChannel(eventChannel);
-        render.setId((int) entry.id());
+        render.setId((int) producer.id());
 
         ConstraintsMap params = new ConstraintsMap();
-        params.putInt("textureId", (int) entry.id());
+        params.putInt("textureId", (int) producer.id());
         result.success(params.toMap());
         break;
       }

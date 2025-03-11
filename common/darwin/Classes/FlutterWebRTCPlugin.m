@@ -593,6 +593,10 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
       for (RTCVideoTrack* track in stream.videoTracks) {
         [_localTracks removeObjectForKey:track.trackId];
         RTCVideoTrack* videoTrack = (RTCVideoTrack*)track;
+        FlutterRTCVideoRenderer *renderer = [self findRendererByTrackId:videoTrack.trackId];
+        if(renderer != nil) {
+          renderer.videoTrack = nil;
+        }
         CapturerStopHandler stopHandler = self.videoCapturerStopHandlers[videoTrack.trackId];
         if (stopHandler) {
           shouldCallResult = NO;
@@ -707,6 +711,10 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     if (audioTrack) {
       [self ensureAudioSession];
     }
+    FlutterRTCVideoRenderer *renderer = [self findRendererByTrackId:trackId];
+    if(renderer != nil) {
+      renderer.videoTrack = nil;
+    }
     result(nil);
   } else if ([@"restartIce" isEqualToString:call.method]) {
     NSDictionary* argsMap = call.arguments;
@@ -754,9 +762,11 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     NSDictionary* argsMap = call.arguments;
     NSNumber* textureId = argsMap[@"textureId"];
     FlutterRTCVideoRenderer* render = self.renders[textureId];
-    render.videoTrack = nil;
-    [render dispose];
-    [self.renders removeObjectForKey:textureId];
+    if(render != nil) {
+      render.videoTrack = nil;
+      [render dispose];
+      [self.renders removeObjectForKey:textureId];
+    }
     result(nil);
   } else if ([@"videoRendererSetSrcObject" isEqualToString:call.method]) {
     NSDictionary* argsMap = call.arguments;
@@ -834,8 +844,10 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
       NSDictionary* argsMap = call.arguments;
       NSNumber* viewId = argsMap[@"viewId"];
       FlutterRTCVideoPlatformViewController* render = _platformViewFactory.renders[viewId];
-      render.videoTrack = nil;
-      [_platformViewFactory.renders removeObjectForKey:viewId];
+      if(render != nil) {
+        render.videoTrack = nil;
+        [_platformViewFactory.renders removeObjectForKey:viewId];
+      }
       result(nil);
     }
 #endif
@@ -2424,5 +2436,14 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     @"receiver" : [self receiverToMap:transceiver.receiver]
   };
   return params;
+}
+
+- (FlutterRTCVideoRenderer *)findRendererByTrackId:(NSString *)trackId {
+    for (FlutterRTCVideoRenderer *renderer in self.renders.allValues) {
+        if (renderer.videoTrack != nil && [renderer.videoTrack.trackId isEqualToString:trackId]) {
+            return renderer;
+        }
+    }
+    return nil;
 }
 @end
