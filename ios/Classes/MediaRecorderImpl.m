@@ -4,14 +4,14 @@
 
 @property (nonatomic, strong) NSNumber *recorderId;
 @property (nonatomic, strong) RTCVideoTrack *videoTrack;
-@property (nonatomic, strong) id<RTCAudioRenderer> audioInterceptor;
+@property (nonatomic, strong, readwrite) id<RTCAudioRenderer> audioInterceptor;
 @property (nonatomic, strong) AVAssetWriter *assetWriter;
 @property (nonatomic, strong) AVAssetWriterInput *videoInput;
 @property (nonatomic, strong) AVAssetWriterInput *audioInput;
 @property (nonatomic, strong) dispatch_queue_t videoQueue;
 @property (nonatomic, strong) dispatch_queue_t audioQueue;
-@property (nonatomic, assign) BOOL isRecording;
-@property (nonatomic, strong) NSString *filePath;
+@property (nonatomic, assign, readwrite) BOOL isRecording;
+@property (nonatomic, strong, readwrite) NSString *filePath;
 @property (nonatomic, strong) dispatch_semaphore_t completionSemaphore;
 @property (nonatomic, assign) NSInteger droppedFrameCount;
 @property (nonatomic, assign) NSInteger processedFrameCount;
@@ -19,6 +19,9 @@
 @property (nonatomic, assign) NSTimeInterval completionTimeout;
 @property (nonatomic, copy) void (^recordingErrorHandler)(NSError *error);
 @property (nonatomic, assign) BOOL useVoiceProcessing;
+@property (nonatomic, assign) double expectedAudioSampleRate;
+@property (nonatomic, assign) int expectedAudioChannels;
+@property (nonatomic, assign) float audioGainFactor;
 
 @end
 
@@ -40,13 +43,20 @@
         _completionTimeout = 10.0; // 10 seconds default
         _useVoiceProcessing = YES; // Enable voice processing by default
         
+        // Set expected audio format (WebRTC typically uses 48kHz)
+        _expectedAudioSampleRate = 48000.0;
+        _expectedAudioChannels = 2;
+        
+        // Initialize audio gain factor for controlled volume reduction
+        _audioGainFactor = 0.05f;
+        
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(handleMemoryWarning)
                                                      name:UIApplicationDidReceiveMemoryWarningNotification
                                                    object:nil];
 
-        NSLog(@"[MediaRecorder-%@] Initialized with videoTrack: %@, audioInterceptor: %@",
-              recorderId, videoTrack ? @"YES" : @"NO", audioInterceptor ? @"YES" : @"NO");
+        NSLog(@"[MediaRecorder-%@] Initialized with videoTrack: %@, audioInterceptor: %@, Audio format: %.0f Hz, %d ch, Audio gain: %.2f",
+              recorderId, videoTrack ? @"YES" : @"NO", audioInterceptor ? @"YES" : @"NO", _expectedAudioSampleRate, _expectedAudioChannels, _audioGainFactor);
 
         if (_videoTrack) {
             [_videoTrack addRenderer:self];
@@ -180,8 +190,8 @@
     
     NSDictionary *audioSettings = @{
         AVFormatIDKey: @(kAudioFormatMPEG4AAC),
-        AVSampleRateKey: @(44100),
-        AVNumberOfChannelsKey: @(2),
+        AVSampleRateKey: @(self.expectedAudioSampleRate),
+        AVNumberOfChannelsKey: @(self.expectedAudioChannels),
         AVChannelLayoutKey: [NSData dataWithBytes:&channelLayout length:sizeof(AudioChannelLayout)],
         AVEncoderBitRateKey: @(128000)
     };
@@ -484,6 +494,11 @@
 
 - (void)renderPCMBuffer:(AVAudioPCMBuffer *)pcmBuffer {
     static NSInteger audioBufferCounter = 0;
+    static dispatch_once_t onceToken;
+    
+    // Use a local copy of the gain factor for thread safety
+    float currentGainFactor = _audioGainFactor;
+    
     audioBufferCounter++;
     
     if (!_isRecording) {
@@ -507,17 +522,37 @@
         return;
     }
     
+    // Log format information for the first audio buffer
+    dispatch_once(&onceToken, ^{
+        NSLog(@"[MediaRecorder-%@] First audio buffer format: Sample Rate=%.0f Hz, Channels=%d, Frame Length=%d",
+              self.recorderId,
+              pcmBuffer.format.sampleRate,
+              (int)pcmBuffer.format.channelCount,
+              (int)pcmBuffer.frameLength);
+              
+        if (fabs(pcmBuffer.format.sampleRate - self.expectedAudioSampleRate) > 1.0 ||
+            pcmBuffer.format.channelCount != self.expectedAudioChannels) {
+            NSLog(@"[MediaRecorder-%@] WARNING: Audio format mismatch! Incoming: %.0f Hz, %d ch - Expected: %.0f Hz, %d ch",
+                  self.recorderId,
+                  pcmBuffer.format.sampleRate,
+                  (int)pcmBuffer.format.channelCount,
+                  self.expectedAudioSampleRate,
+                  self.expectedAudioChannels);
+        }
+    });
+    
     if (audioBufferCounter % 100 == 0) {
-        NSLog(@"[MediaRecorder-%@] Processing audio buffer #%ld - Channels: %d, Sample Rate: %.0f Hz, Frame Length: %d", 
+        NSLog(@"[MediaRecorder-%@] Processing audio buffer #%ld - Channels: %d, Sample Rate: %.0f Hz, Frame Length: %d, Gain: %.2f", 
               _recorderId, 
               (long)audioBufferCounter,
               (int)pcmBuffer.format.channelCount,
               pcmBuffer.format.sampleRate,
-              (int)pcmBuffer.frameLength);
+              (int)pcmBuffer.frameLength,
+              currentGainFactor);
     }
     
-    CMTime timestamp = CMTimeMakeWithSeconds([[NSDate date] timeIntervalSinceDate:_recordingStartTime],
-                                           1000000000);
+    NSTimeInterval elapsedTime = [[NSDate date] timeIntervalSinceDate:_recordingStartTime];
+    CMTime timestamp = CMTimeMakeWithSeconds(elapsedTime, (int32_t)self.expectedAudioSampleRate);
     
     dispatch_async(_audioQueue, ^{
         if (!self.audioInput.isReadyForMoreMediaData) {
@@ -540,40 +575,15 @@
             return;
         }
         
-        // Find max amplitude for normalization
-        float maxAmplitude = 0.0f;
-        for (UInt32 channel = 0; channel < pcmBuffer.format.channelCount; channel++) {
-            float *channelData = pcmBuffer.floatChannelData[channel];
-            for (UInt32 frame = 0; frame < pcmBuffer.frameLength; frame++) {
-                float absValue = fabsf(channelData[frame]);
-                if (absValue > maxAmplitude) {
-                    maxAmplitude = absValue;
-                }
-            }
-        }
-        
-        // Calculate normalization factor (reduce volume to avoid distortion)
-        // Using a lower gain to reduce loudness
-        float normalizationFactor = 0.3f; // Reduce volume to 30%
-        if (maxAmplitude > 0.8f) {
-            // If the signal is very loud, reduce it even more
-            normalizationFactor = 0.2f / maxAmplitude;
-        }
-        
-        // Process audio samples - with iOS built-in noise reduction already applied
-        // Note: When using RTCAudioRenderer, the audio has already been processed by WebRTC's
-        // audio processing module which includes noise suppression, so we just need to
-        // apply normalization and prepare the audio for recording
-        
+        // Process audio samples - applying controlled gain reduction
         for (UInt32 frame = 0; frame < pcmBuffer.frameLength; frame++) {
             for (UInt32 channel = 0; channel < pcmBuffer.format.channelCount; channel++) {
                 float *channelData = pcmBuffer.floatChannelData[channel];
                 float sample = channelData[frame];
                 
-                // Apply normalization to reduce volume
-                sample *= normalizationFactor;
+                // Apply fixed gain reduction to all samples
+                sample *= currentGainFactor;
                 
-                // Store the processed sample
                 interleavedData[frame * pcmBuffer.format.channelCount + channel] = sample;
             }
         }
@@ -688,7 +698,18 @@
                     NSLog(@"[MediaRecorder-%@] Successfully appended audio buffer #%ld", self.recorderId, (long)audioBufferCounter);
                 }
             } else {
-                NSLog(@"[MediaRecorder-%@] Failed to append audio buffer #%ld", self.recorderId, (long)audioBufferCounter);
+                NSLog(@"[MediaRecorder-%@] Failed to append audio buffer #%ld. Writer status: %ld, Error: %@", 
+                      self.recorderId, 
+                      (long)audioBufferCounter, 
+                      (long)self.assetWriter.status, 
+                      self.assetWriter.error ? self.assetWriter.error.localizedDescription : @"Unknown");
+                
+                // Handle recording error if writer is in failed state
+                if (self.assetWriter.status == AVAssetWriterStatusFailed) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        [self handleRecordingError:self.assetWriter.error];
+                    });
+                }
             }
             CFRelease(sampleBuffer);
         }
@@ -735,6 +756,12 @@
         [self stopRecording];
     }
     _completionSemaphore = nil;
+}
+
+- (void)setAudioGain:(float)gain {
+    // Clamp gain between 0.0 and 1.0 (prevent negative gain or excessive amplification)
+    _audioGainFactor = fmaxf(0.0f, fminf(gain, 1.0f));
+    NSLog(@"[MediaRecorder-%@] Audio gain set to: %.2f", _recorderId, _audioGainFactor);
 }
 
 @end

@@ -29,6 +29,9 @@ NS_ASSUME_NONNULL_BEGIN
 // Add method to handle audio PCM buffer from AudioRenderer
 - (void)renderPCMBuffer:(AVAudioPCMBuffer *)pcmBuffer;
 
+// Set the audio gain for recording (0.0-1.0, where 1.0 is full volume)
+- (void)setAudioGain:(float)gain;
+
 @end
 
 NS_ASSUME_NONNULL_END
