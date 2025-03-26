@@ -48,7 +48,7 @@
         _expectedAudioChannels = 2;
         
         // Initialize audio gain factor for controlled volume reduction
-        _audioGainFactor = 0.05f;
+        _audioGainFactor = 0.01f;
         
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(handleMemoryWarning)
