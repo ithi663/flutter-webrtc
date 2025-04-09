@@ -1,6 +1,25 @@
 
 # Changelog
 
+[0.13.1+hotfix.1] - 2024-04-07
+
+* [Android] fix: Fix `clearAndroidCommunicationDevice` call blocking.
+
+[0.13.1] - 2025-04-03
+
+* [Android] fix: remove setPreferredInputDevice when getUserAduio. (#1808)
+* [Web] fix: race condition in RTCVideoRenderer for Web (#1805)
+* [Android] fix: Migrate from onSurfaceDestroyed to onSurfaceCleanup for SurfaceProducer.Callback. (#1806)
+
+[0.13.0] - 2025-03-24
+
+* [All] feat: add getBufferedAmount for DataChannel. (#1796)
+* [Windows] fix: fixed non-platform thread call error. (#1795)
+
+[0.12.12+hotfix.1] - 2025-03-12
+
+* [Android] fix: fixed video not rendered after resume from background.
+
 [0.12.12] - 2025-03-09
 
 * [Android] feat: Migrate to the new Surface API. (#1726)
