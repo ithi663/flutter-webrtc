@@ -998,6 +998,60 @@ public class GetUserMediaImpl {
         boolean isEnabled(String id);
     }
 
+    /**
+     * Disposes all resources maintained by GetUserMediaImpl
+     * This method will release all video capturers, surface texture helpers, 
+     * and any recording resources currently in use.
+     */
+    public void dispose() {
+        Log.d(TAG, "Disposing GetUserMediaImpl");
+        
+        // Release all video capturers
+        for (VideoCapturerInfoEx capturerInfo : mVideoCapturers.values()) {
+            try {
+                capturerInfo.capturer.stopCapture();
+            } catch (InterruptedException e) {
+                Log.e(TAG, "Failed to stop video capturer", e);
+            }
+            capturerInfo.capturer.dispose();
+        }
+        mVideoCapturers.clear();
+        
+        // Release all surface texture helpers
+        for (SurfaceTextureHelper surfaceTextureHelper : mSurfaceTextureHelpers.values()) {
+            surfaceTextureHelper.dispose();
+        }
+        mSurfaceTextureHelpers.clear();
+        
+        // Stop all recordings
+        for (int i = 0; i < mediaRecorders.size(); i++) {
+            MediaRecorderImpl mediaRecorder = mediaRecorders.valueAt(i);
+            if (mediaRecorder != null) {
+                mediaRecorder.stopRecording();
+            }
+        }
+        mediaRecorders.clear();
+        
+        // Clear the projection data
+        mediaProjectionData = null;
+        
+        // Reset other resources
+        isTorchOn = false;
+        preferredInput = null;
+        
+        // Clear interceptors
+        if (inputSamplesInterceptor != null) {
+            inputSamplesInterceptor.clear();
+        }
+        
+        if (outputSamplesInterceptor != null) {
+            outputSamplesInterceptor.clear();
+            outputSamplesInterceptor = null;
+        }
+        
+        Log.d(TAG, "GetUserMediaImpl disposed");
+    }
+
     public static class VideoCapturerInfoEx extends VideoCapturerInfo  {
         public CameraEventsHandler cameraEventsHandler;
     }

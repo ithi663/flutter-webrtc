@@ -50,7 +50,7 @@ class _DataChannelLoopBackSampleState extends State<DataChannelLoopBackSample> {
           });
         };
         _dataChannel2!.onMessage = (data) async {
-          var bufferedAmount = await _dataChannel2!.getBufferedAmount();
+          var bufferedAmount = await _dataChannel2!.bufferedAmount;
           setState(() {
             _dataChannel2Status +=
                 '\ndataChannel2: Received message: ${data.text}, bufferedAmount: $bufferedAmount';
@@ -72,7 +72,7 @@ class _DataChannelLoopBackSampleState extends State<DataChannelLoopBackSample> {
       };
 
       _dataChannel1!.onMessage = (data) async {
-        var bufferedAmount = await _dataChannel2!.getBufferedAmount();
+        var bufferedAmount = await _dataChannel2!.bufferedAmount;
         _dataChannel1Status +=
             '\ndataChannel1: Received message: ${data.text}, bufferedAmount: $bufferedAmount';
         setState(() {});

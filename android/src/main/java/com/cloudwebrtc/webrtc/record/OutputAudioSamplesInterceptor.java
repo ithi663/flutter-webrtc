@@ -24,4 +24,12 @@ public class OutputAudioSamplesInterceptor extends AudioSamplesInterceptor {
         if (callbacks.isEmpty())
             WebRtcAudioTrackUtils.detachOutputCallback(audioDeviceModule);
     }
+
+    @Override
+    public void clear() {
+        if (!callbacks.isEmpty()) {
+            super.clear();
+            WebRtcAudioTrackUtils.detachOutputCallback(audioDeviceModule);
+        }
+    }
 }

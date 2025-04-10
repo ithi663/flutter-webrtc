@@ -31,4 +31,8 @@ public class AudioSamplesInterceptor implements SamplesReadyCallback {
         callbacks.remove(id);
     }
 
+    public void clear() {
+        callbacks.clear();
+    }
+
 }

@@ -78,6 +78,7 @@ import org.webrtc.audio.AudioDeviceModule;
 import org.webrtc.audio.JavaAudioDeviceModule;
 import org.webrtc.video.CustomVideoDecoderFactory;
 import org.webrtc.video.CustomVideoEncoderFactory;
+import com.cloudwebrtc.webrtc.record.MediaRecorderImpl;
 
 import java.io.File;
 import java.nio.ByteBuffer;
@@ -160,6 +161,139 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
     }
     mPeerConnectionObservers.clear();
   }
+
+  /**
+   * Dispose all WebRTC occupied resources
+   * This method will completely clean up all resources used by WebRTC including:
+   * - All peer connections
+   * - All local and remote streams
+   * - All audio and video tracks
+   * - All renderers
+   * - Audio device module
+   * - Video encoder and decoder factories
+   * - PeerConnectionFactory
+   * - Audio switch manager
+   * 
+   * Call this method when you want to completely release all WebRTC resources.
+   */
+  public void disposeAll() {
+    Log.d(TAG, "disposeAll() - releasing all WebRTC resources");
+    
+    // Dispose all peer connections first
+    for (final PeerConnectionObserver pco : mPeerConnectionObservers.values()) {
+      if (pco != null) {
+        peerConnectionDispose(pco);
+      }
+    }
+    mPeerConnectionObservers.clear();
+    
+    // Dispose all media streams
+    for (final MediaStream mediaStream : localStreams.values()) {
+      streamDispose(mediaStream);
+      mediaStream.dispose();
+    }
+    localStreams.clear();
+    
+    // Dispose all tracks
+    for (final LocalTrack track : localTracks.values()) {
+      track.dispose();
+    }
+    localTracks.clear();
+    
+    // Dispose all renderers
+    for (int i = 0; i < renders.size(); i++) {
+      FlutterRTCVideoRenderer renderer = renders.valueAt(i);
+      if (renderer != null) {
+        renderer.Dispose();
+      }
+    }
+    renders.clear();
+    
+    // Stop audio switch manager
+    AudioSwitchManager.instance.stop();
+    
+    // Release camera resources
+    if (getUserMediaImpl != null) {
+      getUserMediaImpl.dispose();
+    }
+    
+    // Dispose audio device module
+    if (audioDeviceModule != null) {
+      audioDeviceModule.release();
+      audioDeviceModule = null;
+    }
+    
+    // Clean up factory resources
+    if (videoEncoderFactory != null) {
+      videoEncoderFactory = null;
+    }
+    
+    if (videoDecoderFactory != null) {
+      videoDecoderFactory = null;
+    }
+    
+    // Finally dispose the peer connection factory
+    if (mFactory != null) {
+      mFactory.dispose();
+      mFactory = null;
+    }
+    
+    // Reset state
+    recordSamplesReadyCallbackAdapter = null;
+    playbackSamplesReadyCallbackAdapter = null;
+    frameCryptor = null;
+    
+    Log.d(TAG, "disposeAll() - all WebRTC resources released");
+  }
+
+  /**
+   * Stops all WebRTC media resources but keeps the WebRTC infrastructure intact
+   * This method will:
+   * - Stop all media tracks (audio/video)
+   * - Release camera resources
+   * - Stop all recordings
+   * - Close all streams
+   * But it maintains the PeerConnection factory and core infrastructure
+   * so you can easily start playing or watching new streams without reinitializing everything.
+   */
+  public void stopAll() {
+    Log.d(TAG, "stopAll() - releasing WebRTC media resources but keeping infrastructure");
+    
+    // Release all media streams
+    for (final MediaStream mediaStream : localStreams.values()) {
+      streamDispose(mediaStream);
+    }
+    localStreams.clear();
+    
+    // Stop all tracks
+    for (final LocalTrack track : localTracks.values()) {
+      track.setEnabled(false);
+      if (track instanceof LocalVideoTrack) {
+        getUserMediaImpl.removeVideoCapturer(track.id());
+      }
+      track.dispose();
+    }
+    localTracks.clear();
+    
+    // Disable all renderers but don't dispose them
+    for (int i = 0; i < renders.size(); i++) {
+      FlutterRTCVideoRenderer renderer = renders.valueAt(i);
+      if (renderer != null) {
+        renderer.setStream(null, "");
+      }
+    }
+    
+    // Stop camera resources
+    if (getUserMediaImpl != null) {
+      getUserMediaImpl.dispose();
+    }
+    
+    // Don't attempt to access private mediaRecorders field directly
+    // Instead, let the getUserMediaImpl.dispose() handle stopping recordings
+    
+    Log.d(TAG, "stopAll() - all WebRTC media resources released but infrastructure maintained");
+  }
+
   private void initialize(boolean bypassVoiceProcessing, int networkIgnoreMask, boolean forceSWCodec, List<String> forceSWCodecList,
   @Nullable ConstraintsMap androidAudioConfiguration) {
     if (mFactory != null) {
@@ -360,6 +494,10 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
         Map<String, Object> constraints = call.argument("constraints");
         ConstraintsMap constraintsMap = new ConstraintsMap(constraints);
         getUserMedia(constraintsMap, result);
+        break;
+      }
+      case "disposeGetUserMedia": {
+        disposeGetUserMedia(result);
         break;
       }
       case "createLocalMediaStream":
@@ -1012,6 +1150,16 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
           params.putString("state", Utils.connectionStateString(pc.connectionState()));
           result.success(params.toMap());
         }
+        break;
+      }
+      case "disposeAll": {
+        disposeAll();
+        result.success(null);
+        break;
+      }
+      case "stopAll": {
+        stopAll();
+        result.success(null);
         break;
       }
       default:
@@ -2234,18 +2382,35 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
 
 
   public void reStartCamera() {
-    if (null == getUserMediaImpl) {
-      return;
-    }
-    getUserMediaImpl.reStartCamera(new GetUserMediaImpl.IsCameraEnabled() {
-      @Override
-      public boolean isEnabled(String id) {
-        if (!localTracks.containsKey(id)) {
-          return false;
+    if (getUserMediaImpl != null) {
+      getUserMediaImpl.reStartCamera(new GetUserMediaImpl.IsCameraEnabled() {
+        @Override
+        public boolean isEnabled(String id) {
+          return isLocalTrackExist(id);
         }
-        return localTracks.get(id).enabled();
-      }
-    });
+      });
+    }
+  }
+
+  /**
+   * Disposes the GetUserMediaImpl resources, releasing all hardware resources (camera, etc.)
+   * This is useful when you want to free up resources without destroying the entire WebRTC connection
+   */
+  public void disposeGetUserMedia(final Result result) {
+    Log.d(TAG, "disposeGetUserMedia() - releasing GetUserMediaImpl resources");
+    if (getUserMediaImpl != null) {
+      getUserMediaImpl.dispose();
+      result.success(null);
+    } else {
+      resultError("disposeGetUserMedia", "GetUserMediaImpl is null", result);
+    }
+  }
+
+  boolean isLocalTrackExist(String id) {
+    if (!localTracks.containsKey(id)) {
+      return false;
+    }
+    return localTracks.get(id).enabled();
   }
 
   @RequiresApi(api = Build.VERSION_CODES.M)

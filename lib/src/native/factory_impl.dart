@@ -88,6 +88,37 @@ class RTCFactoryNative extends RTCFactory {
     );
     return RTCRtpCapabilities.fromMap(response);
   }
+
+  /// Disposes of all WebRTC resources
+  ///
+  /// This method can be used to clean up all WebRTC resources when
+  /// the application is being closed or when WebRTC functionality
+  /// is no longer needed.
+  Future<void> disposeAll() async {
+    await WebRTC.invokeMethod('disposeAll');
+  }
+
+  /// Disposes only of the getUserMedia resources
+  ///
+  /// This method is useful when you want to release camera, microphone, and
+  /// other media device resources without destroying peer connections or
+  /// other WebRTC components.
+  Future<void> disposeGetUserMedia() async {
+    await WebRTC.invokeMethod('disposeGetUserMedia');
+  }
+
+  /// Stops all WebRTC media resources but keeps the WebRTC infrastructure intact
+  ///
+  /// This method will:
+  /// - Stop all media tracks (audio/video)
+  /// - Release camera resources
+  /// - Stop all recordings
+  /// - Close all streams
+  /// But it maintains the PeerConnection factory and core infrastructure
+  /// so you can easily start playing or watching new streams without reinitializing everything.
+  Future<void> stopAll() async {
+    await WebRTC.invokeMethod('stopAll');
+  }
 }
 
 Future<RTCPeerConnection> createPeerConnection(
@@ -120,3 +151,34 @@ DesktopCapturer get desktopCapturer => DesktopCapturerNative.instance;
 MediaDevices get mediaDevices => MediaDeviceNative.instance;
 
 FrameCryptorFactory get frameCryptorFactory => FrameCryptorFactoryImpl.instance;
+
+/// Disposes of all WebRTC resources
+///
+/// This method can be used to clean up all WebRTC resources when
+/// the application is being closed or when WebRTC functionality
+/// is no longer needed.
+Future<void> disposeAll() async {
+  await WebRTC.invokeMethod('disposeAll');
+}
+
+/// Disposes only of the getUserMedia resources
+///
+/// This method is useful when you want to release camera, microphone, and
+/// other media device resources without destroying peer connections or
+/// other WebRTC components.
+Future<void> disposeGetUserMedia() async {
+  await WebRTC.invokeMethod('disposeGetUserMedia');
+}
+
+/// Stops all WebRTC media resources but keeps the WebRTC infrastructure intact
+///
+/// This method will:
+/// - Stop all media tracks (audio/video)
+/// - Release camera resources
+/// - Stop all recordings
+/// - Close all streams
+/// But it maintains the PeerConnection factory and core infrastructure
+/// so you can easily start playing or watching new streams without reinitializing everything.
+Future<void> stopAll() async {
+  await WebRTC.invokeMethod('stopAll');
+}
