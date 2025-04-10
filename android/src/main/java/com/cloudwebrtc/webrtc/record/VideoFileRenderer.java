@@ -51,6 +51,11 @@ class VideoFileRenderer implements VideoSink, SamplesReadyCallback {
     private Surface surface;
     private MediaCodec audioEncoder;
 
+    private boolean encoderStarted = false;
+    private volatile boolean muxerStarted = false;
+    private long videoFrameStart = 0;
+    private volatile boolean isReleasing = false;
+
     VideoFileRenderer(String outputFile, final EglBase.Context sharedContext, boolean withAudio) throws IOException {
         renderThread = new HandlerThread(TAG + "RenderThread");
         renderThread.start();
@@ -129,29 +134,60 @@ class VideoFileRenderer implements VideoSink, SamplesReadyCallback {
      */
     void release() {
         isRunning = false;
-        if (audioThreadHandler != null)
+        isReleasing = true;
+        
+        // First stop audio processing on the audio thread
+        if (audioThreadHandler != null) {
             audioThreadHandler.post(() -> {
                 if (audioEncoder != null) {
-                    audioEncoder.stop();
-                    audioEncoder.release();
+                    try {
+                        audioEncoder.stop();
+                        audioEncoder.release();
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error stopping audio encoder", e);
+                    }
                 }
-                audioThread.quit();
             });
-        renderThreadHandler.post(() -> {
-            if (encoder != null) {
-                encoder.stop();
-                encoder.release();
+            
+            try {
+                // Give audio thread time to complete current processing
+                audioThread.quitSafely();
+                audioThread.join(500); // Wait for audio thread to complete
+            } catch (InterruptedException e) {
+                Log.e(TAG, "Interrupted while waiting for audio thread to quit", e);
             }
-            eglBase.release();
-            mediaMuxer.stop();
-            mediaMuxer.release();
-            renderThread.quit();
+        }
+        
+        // Then handle the video and muxer on the render thread
+        renderThreadHandler.post(() -> {
+            try {
+                if (encoder != null) {
+                    encoder.stop();
+                    encoder.release();
+                }
+                
+                if (eglBase != null) {
+                    eglBase.release();
+                }
+                
+                if (muxerStarted) {
+                    mediaMuxer.stop();
+                    mediaMuxer.release();
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error releasing resources", e);
+            } finally {
+                renderThread.quitSafely();
+            }
         });
+        
+        try {
+            // Wait for render thread to complete before returning
+            renderThread.join(1000);
+        } catch (InterruptedException e) {
+            Log.e(TAG, "Interrupted while waiting for render thread to quit", e);
+        }
     }
-
-    private boolean encoderStarted = false;
-    private volatile boolean muxerStarted = false;
-    private long videoFrameStart = 0;
 
     private void drainEncoder() {
         if (!encoderStarted) {
@@ -216,58 +252,85 @@ class VideoFileRenderer implements VideoSink, SamplesReadyCallback {
     private void drainAudio() {
         if (audioBufferInfo == null)
             audioBufferInfo = new MediaCodec.BufferInfo();
+            
+        if (isReleasing) return;
+            
         while (true) {
-            int encoderStatus = audioEncoder.dequeueOutputBuffer(audioBufferInfo, 10000);
-            if (encoderStatus == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                break;
-            } else if (encoderStatus == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED) {
-                // not expected for an encoder
-                audioOutputBuffers = audioEncoder.getOutputBuffers();
-                Log.w(TAG, "encoder output buffers changed");
-            } else if (encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                // not expected for an encoder
-                MediaFormat newFormat = audioEncoder.getOutputFormat();
+            try {
+                int encoderStatus = audioEncoder.dequeueOutputBuffer(audioBufferInfo, 10000);
+                if (encoderStatus == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                    break;
+                } else if (encoderStatus == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED) {
+                    // not expected for an encoder
+                    audioOutputBuffers = audioEncoder.getOutputBuffers();
+                    Log.w(TAG, "encoder output buffers changed");
+                } else if (encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    // not expected for an encoder
+                    MediaFormat newFormat = audioEncoder.getOutputFormat();
 
-                Log.w(TAG, "encoder output format changed: " + newFormat);
-                audioTrackIndex = mediaMuxer.addTrack(newFormat);
-                if (trackIndex != -1 && !muxerStarted) {
-                    mediaMuxer.start();
-                    muxerStarted = true;
-                }
-                if (!muxerStarted)
-                    break;
-            } else if (encoderStatus < 0) {
-                Log.e(TAG, "unexpected result fr om encoder.dequeueOutputBuffer: " + encoderStatus);
-            } else { // encoderStatus >= 0
-                try {
-                    ByteBuffer encodedData = audioOutputBuffers[encoderStatus];
-                    if (encodedData == null) {
-                        Log.e(TAG, "encoderOutputBuffer " + encoderStatus + " was null");
+                    Log.w(TAG, "encoder output format changed: " + newFormat);
+                    audioTrackIndex = mediaMuxer.addTrack(newFormat);
+                    if (trackIndex != -1 && !muxerStarted) {
+                        mediaMuxer.start();
+                        muxerStarted = true;
+                    }
+                    if (!muxerStarted)
+                        break;
+                } else if (encoderStatus < 0) {
+                    Log.e(TAG, "unexpected result fr om encoder.dequeueOutputBuffer: " + encoderStatus);
+                } else { // encoderStatus >= 0
+                    try {
+                        ByteBuffer encodedData = audioOutputBuffers[encoderStatus];
+                        if (encodedData == null) {
+                            Log.e(TAG, "encoderOutputBuffer " + encoderStatus + " was null");
+                            break;
+                        }
+                        // It's usually necessary to adjust the ByteBuffer values to match BufferInfo.
+                        encodedData.position(audioBufferInfo.offset);
+                        encodedData.limit(audioBufferInfo.offset + audioBufferInfo.size);
+                        if (muxerStarted && !isReleasing) {
+                            mediaMuxer.writeSampleData(audioTrackIndex, encodedData, audioBufferInfo);
+                        }
+                        isRunning = isRunning && (audioBufferInfo.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) == 0;
+                        audioEncoder.releaseOutputBuffer(encoderStatus, false);
+                        if ((audioBufferInfo.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                            break;
+                        }
+                    } catch (IllegalStateException e) {
+                        // This can happen if the muxer was released while we were trying to write
+                        if (!isReleasing) {
+                            Log.e(TAG, "Failed to write audio sample", e);
+                        }
+                        break;
+                    } catch (Exception e) {
+                        if (!isReleasing) {
+                            Log.e(TAG, "Error in drainAudio", e);
+                        }
                         break;
                     }
-                    // It's usually necessary to adjust the ByteBuffer values to match BufferInfo.
-                    encodedData.position(audioBufferInfo.offset);
-                    encodedData.limit(audioBufferInfo.offset + audioBufferInfo.size);
-                    if (muxerStarted)
-                        mediaMuxer.writeSampleData(audioTrackIndex, encodedData, audioBufferInfo);
-                    isRunning = isRunning && (audioBufferInfo.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) == 0;
-                    audioEncoder.releaseOutputBuffer(encoderStatus, false);
-                    if ((audioBufferInfo.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                        break;
-                    }
-                } catch (Exception e) {
-                    Log.wtf(TAG, e);
-                    break;
                 }
+            } catch (IllegalStateException e) {
+                // This can happen if the muxer was released while we were trying to write
+                if (!isReleasing) {
+                    Log.e(TAG, "Failed to write audio sample", e);
+                }
+                break;
+            } catch (Exception e) {
+                if (!isReleasing) {
+                    Log.e(TAG, "Error in drainAudio", e);
+                }
+                break;
             }
         }
     }
 
     @Override
     public void onWebRtcAudioRecordSamplesReady(JavaAudioDeviceModule.AudioSamples audioSamples) {
-        if (!isRunning)
+        if (!isRunning || isReleasing)
             return;
         audioThreadHandler.post(() -> {
+            if (isReleasing) return;
+            
             if (audioEncoder == null) try {
                 audioEncoder = MediaCodec.createEncoderByType("audio/mp4a-latm");
                 MediaFormat format = new MediaFormat();
@@ -283,16 +346,23 @@ class VideoFileRenderer implements VideoSink, SamplesReadyCallback {
             } catch (IOException exception) {
                 Log.wtf(TAG, exception);
             }
-            int bufferIndex = audioEncoder.dequeueInputBuffer(0);
-            if (bufferIndex >= 0) {
-                ByteBuffer buffer = audioInputBuffers[bufferIndex];
-                buffer.clear();
-                byte[] data = audioSamples.getData();
-                buffer.put(data);
-                audioEncoder.queueInputBuffer(bufferIndex, 0, data.length, presTime, 0);
-                presTime += data.length * 125 / 12; // 1000000 microseconds / 48000hz / 2 bytes
+            
+            try {
+                int bufferIndex = audioEncoder.dequeueInputBuffer(0);
+                if (bufferIndex >= 0) {
+                    ByteBuffer buffer = audioInputBuffers[bufferIndex];
+                    buffer.clear();
+                    byte[] data = audioSamples.getData();
+                    buffer.put(data);
+                    audioEncoder.queueInputBuffer(bufferIndex, 0, data.length, presTime, 0);
+                    presTime += data.length * 125 / 12; // 1000000 microseconds / 48000hz / 2 bytes
+                }
+                drainAudio();
+            } catch (Exception e) {
+                if (!isReleasing) {
+                    Log.e(TAG, "Error processing audio", e);
+                }
             }
-            drainAudio();
         });
     }
 

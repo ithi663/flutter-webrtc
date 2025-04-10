@@ -13,10 +13,12 @@ import android.hardware.camera2.CameraManager;
 import android.media.AudioDeviceInfo;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ResultReceiver;
@@ -69,6 +71,10 @@ import org.webrtc.VideoTrack;
 import org.webrtc.audio.JavaAudioDeviceModule;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -966,22 +972,15 @@ public class GetUserMediaImpl {
     void stopRecording(Integer id) {
         MediaRecorderImpl mediaRecorder = mediaRecorders.get(id);
         if (mediaRecorder != null) {
-            mediaRecorder.stopRecording();
-            mediaRecorders.remove(id);
-            File file = mediaRecorder.getRecordFile();
-            if (file != null) {
-                ContentValues values = new ContentValues(3);
-                values.put(MediaStore.Video.Media.TITLE, file.getName());
-                values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
-                values.put(MediaStore.Video.Media.DATA, file.getAbsolutePath());
-                applicationContext
-                        .getContentResolver()
-                        .insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+            try {
+                mediaRecorder.stopRecording();
+            } catch (Exception e) {
+                Log.e(TAG, "stopRecording() Failed to stop recording");
+            } finally {
+                mediaRecorders.remove(id);
             }
         }
     }
-
-
 
     public void reStartCamera(IsCameraEnabled getCameraId) {
         for (Map.Entry<String, VideoCapturerInfoEx> item : mVideoCapturers.entrySet()) {
