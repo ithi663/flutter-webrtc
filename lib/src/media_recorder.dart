@@ -8,23 +8,31 @@ class MediaRecorder extends rtc.MediaRecorder {
   final rtc.MediaRecorder _delegate;
 
   @override
-  Future<void> start(String path,
-          {MediaStreamTrack? videoTrack, RecorderAudioChannel? audioChannel}) =>
-      startWithDimensions(path,
-          videoTrack: videoTrack, audioChannel: audioChannel);
+  Future<void> start(
+    String path, {
+    MediaStreamTrack? videoTrack,
+    RecorderAudioChannel? audioChannel,
+  }) => startWithDimensions(
+    path,
+    videoTrack: videoTrack,
+    audioChannel: audioChannel,
+  );
 
   /// Start recording with optional width and height parameters.
   /// If width and height are not provided, the recorder will use the default dimensions.
-  Future<void> startWithDimensions(String path,
-          {MediaStreamTrack? videoTrack,
-          RecorderAudioChannel? audioChannel,
-          int? width,
-          int? height}) =>
-      (_delegate as MediaRecorderNative).start(path,
-          videoTrack: videoTrack,
-          audioChannel: audioChannel,
-          width: width,
-          height: height);
+  Future<void> startWithDimensions(
+    String path, {
+    MediaStreamTrack? videoTrack,
+    RecorderAudioChannel? audioChannel,
+    int? width,
+    int? height,
+  }) => (_delegate as MediaRecorderNative).start(
+    path,
+    videoTrack: videoTrack,
+    audioChannel: audioChannel,
+    width: width,
+    height: height,
+  );
 
   @override
   Future stop() => _delegate.stop();
@@ -35,11 +43,10 @@ class MediaRecorder extends rtc.MediaRecorder {
     Function(dynamic blob, bool isLastOne)? onDataChunk,
     String? mimeType,
     int timeSlice = 1000,
-  }) =>
-      _delegate.startWeb(
-        stream,
-        onDataChunk: onDataChunk,
-        mimeType: mimeType ?? 'video/webm',
-        timeSlice: timeSlice,
-      );
+  }) => _delegate.startWeb(
+    stream,
+    onDataChunk: onDataChunk,
+    mimeType: mimeType ?? 'video/webm',
+    timeSlice: timeSlice,
+  );
 }

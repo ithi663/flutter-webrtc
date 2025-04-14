@@ -68,6 +68,39 @@ class Helper {
     return Future.value(true);
   }
 
+  // Helper method to get the currently active video device ID
+  static Future<String?> _getActiveVideoDeviceId() async {
+    try {
+      final devices = await navigator.mediaDevices.enumerateDevices();
+      final videoDevices =
+          devices.where((d) => d.kind == 'videoinput').toList();
+
+      if (videoDevices.isEmpty) {
+        return null;
+      }
+
+      // If there's only one camera, return its ID
+      if (videoDevices.length == 1) {
+        return videoDevices.first.deviceId;
+      }
+
+      // Try to find which camera is active
+      // This is just a best-effort approach as there's no standard way
+      // to determine which camera is currently active across platforms
+      for (final device in videoDevices) {
+        if (device.label.isNotEmpty) {
+          // A non-empty label often indicates an active or recently active device
+          return device.deviceId;
+        }
+      }
+
+      // Otherwise return the first camera as default
+      return videoDevices.first.deviceId;
+    } catch (e) {
+      return null;
+    }
+  }
+
   static Future<void> setZoom(MediaStreamTrack videoTrack, double zoomLevel) =>
       CameraUtils.setZoom(videoTrack, zoomLevel);
 
