@@ -29,6 +29,25 @@
     // Forward the PCM buffer to the MediaRecorderImpl if available
     if (_recorder != nil) {
         if ([_recorder isRecording]) {
+            // Scale down the audio samples
+            float volumeFactor = 0.2f; // Adjust this value to change volume
+            
+            if (pcmBuffer.format.commonFormat == AVAudioPCMFormatFloat32) {
+                float *channelData = pcmBuffer.floatChannelData[0]; // Assuming mono or taking the first channel
+                for (AVAudioFrameCount i = 0; i < pcmBuffer.frameLength; ++i) {
+                    channelData[i] *= volumeFactor;
+                }
+            } else if (pcmBuffer.format.commonFormat == AVAudioPCMFormatInt16) {
+                int16_t *channelData = pcmBuffer.int16ChannelData[0]; // Assuming mono or taking the first channel
+                for (AVAudioFrameCount i = 0; i < pcmBuffer.frameLength; ++i) {
+                    channelData[i] = (int16_t)(channelData[i] * volumeFactor);
+                }
+            } else {
+                 if (bufferCounter % 100 == 0) { // Log only periodically
+                     NSLog(@"[AudioRenderer] Unsupported audio format for volume scaling: %@", pcmBuffer.format.description);
+                 }
+            }
+
             [_recorder renderPCMBuffer:pcmBuffer];
             
             if (bufferCounter % 100 == 0) {
