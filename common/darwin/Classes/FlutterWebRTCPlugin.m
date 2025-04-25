@@ -1587,10 +1587,7 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     }
     
     NSError* error = nil;
-    [recorder startRecording:path
-                 withWidth:width ? [width integerValue] : 0
-                withHeight:height ? [height integerValue] : 0
-                    error:&error];
+    [recorder startRecording:path error:&error];
     
     if (error) {
         NSLog(@"[FlutterWebRTC] Error starting recording: %@", error.localizedDescription);

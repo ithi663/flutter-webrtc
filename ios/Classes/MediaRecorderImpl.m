@@ -67,11 +67,9 @@
 }
 
 - (void)startRecording:(NSString *)filePath
-             withWidth:(NSInteger)width
-            withHeight:(NSInteger)height
                  error:(NSError **)error {
-    NSLog(@"[MediaRecorder-%@] Attempting to start recording to path: %@ with dimensions: %ldx%ld, videoTrack: %@, audioInterceptor: %@",
-          _recorderId, filePath, (long)width, (long)height, _videoTrack ? @"YES" : @"NO", _audioInterceptor ? @"YES" : @"NO");
+    NSLog(@"[MediaRecorder-%@] Attempting to start recording to path: %@, videoTrack: %@, audioInterceptor: %@",
+          _recorderId, filePath, _videoTrack ? @"YES" : @"NO", _audioInterceptor ? @"YES" : @"NO");
     
     if (_isRecording) {
         NSLog(@"[MediaRecorder-%@] Error: Already recording", _recorderId);
@@ -89,16 +87,6 @@
             *error = [NSError errorWithDomain:@"MediaRecorder"
                                          code:2
                                      userInfo:@{NSLocalizedDescriptionKey: @"Invalid file path"}];
-        }
-        return;
-    }
-    // Validate dimensions
-    if (width <= 0 || height <= 0) {
-        NSLog(@"[MediaRecorder-%@] Error: Invalid dimensions: %ldx%ld", _recorderId, (long)width, (long)height);
-        if (error) {
-            *error = [NSError errorWithDomain:@"MediaRecorder"
-                                         code:8
-                                     userInfo:@{NSLocalizedDescriptionKey: @"Invalid dimensions"}];
         }
         return;
     }
@@ -135,108 +123,15 @@
         }
     }
     _filePath = filePath;
-    NSURL *fileURL = [NSURL fileURLWithPath:filePath];
-    _assetWriter = [[AVAssetWriter alloc] initWithURL:fileURL
-                                            fileType:AVFileTypeMPEG4
-                                               error:error];
-    if (*error) {
-        NSLog(@"[MediaRecorder-%@] Failed to create asset writer: %@", _recorderId, (*error).localizedDescription);
-        return;
-    }
-    if (!_videoTrack) {
-        NSLog(@"[MediaRecorder-%@] Error: No video track available", _recorderId);
-        if (error) {
-            *error = [NSError errorWithDomain:@"MediaRecorder"
-                                         code:5
-                                     userInfo:@{NSLocalizedDescriptionKey: @"No video track available"}];
-        }
-        return;
-    }
-    // Reset statistics
-    self.recordingStartTime = [NSDate date];
-    self.droppedFrameCount = 0;
-    self.processedFrameCount = 0;
-    // Use provided dimensions for video settings
-    NSDictionary *videoSettings = @{
-        AVVideoCodecKey : AVVideoCodecTypeH264,
-        AVVideoWidthKey : @(width),
-        AVVideoHeightKey : @(height),
-        AVVideoCompressionPropertiesKey : @{
-            AVVideoAverageBitRateKey : @2000000,
-            AVVideoMaxKeyFrameIntervalKey : @60,
-            AVVideoProfileLevelKey : AVVideoProfileLevelH264HighAutoLevel
-        }
-    };
-    _videoInput = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeVideo
-                                                 outputSettings:videoSettings];
-    _videoInput.expectsMediaDataInRealTime = YES;
-    if ([_assetWriter canAddInput:_videoInput]) {
-        [_assetWriter addInput:_videoInput];
-        NSLog(@"[MediaRecorder-%@] Added video input to asset writer with dimensions: %ldx%ld",
-              _recorderId, (long)width, (long)height);
-    } else {
-        NSLog(@"[MediaRecorder-%@] Error: Could not add video input to asset writer", _recorderId);
-        if (error) {
-            *error = [NSError errorWithDomain:@"MediaRecorder"
-                                         code:6
-                                     userInfo:@{NSLocalizedDescriptionKey: @"Could not add video input"}];
-        }
-        return;
-    }
-    // Configure audio settings
-    AudioChannelLayout channelLayout;
-    memset(&channelLayout, 0, sizeof(AudioChannelLayout));
-    channelLayout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo;
-    
-    NSDictionary *audioSettings = @{
-        AVFormatIDKey: @(kAudioFormatMPEG4AAC),
-        AVSampleRateKey: @(self.expectedAudioSampleRate),
-        AVNumberOfChannelsKey: @(self.expectedAudioChannels),
-        AVChannelLayoutKey: [NSData dataWithBytes:&channelLayout length:sizeof(AudioChannelLayout)],
-        AVEncoderBitRateKey: @(128000)
-    };
-    
-    NSLog(@"[MediaRecorder-%@] Configuring audio with settings: %@", _recorderId, audioSettings);
-    
-    _audioInput = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeAudio
-                                                outputSettings:audioSettings];
-    _audioInput.expectsMediaDataInRealTime = YES;
-    
-    if ([_assetWriter canAddInput:_audioInput]) {
-        [_assetWriter addInput:_audioInput];
-        NSLog(@"[MediaRecorder-%@] Successfully added audio input to asset writer", _recorderId);
-    } else {
-        NSLog(@"[MediaRecorder-%@] Error: Could not add audio input to asset writer. Error: %@", 
-              _recorderId, _assetWriter.error ? _assetWriter.error.localizedDescription : @"Unknown error");
-        if (error) {
-            *error = [NSError errorWithDomain:@"MediaRecorder"
-                                       code:9
-                                   userInfo:@{NSLocalizedDescriptionKey: @"Could not add audio input"}];
-        }
-        return;
-    }
-    // Start writing
-    if ([_assetWriter startWriting]) {
-        [_assetWriter startSessionAtSourceTime:CMTimeMake(0, 1000000000)];
-        _isRecording = YES;
-        _recordingStartTime = [NSDate date];
-        NSLog(@"[MediaRecorder-%@] Successfully started recording", _recorderId);
-    } else {
-        NSLog(@"[MediaRecorder-%@] Failed to start recording: %@", _recorderId, _assetWriter.error.localizedDescription);
-        if (error) {
-            *error = _assetWriter.error;
-            if (!error) {
-                *error = [NSError errorWithDomain:@"MediaRecorder"
-                                             code:7
-                                         userInfo:@{NSLocalizedDescriptionKey: @"Failed to start recording"}];
-            }
-        }
-    }
+    self.processedFrameCount = 0;    
+    self.recordingStartTime = [NSDate date]; // Set start time
+    _isRecording = YES; // Mark as recording, pending writer setup on first frame
+    NSLog(@"[MediaRecorder-%@] Recording prepared, waiting for first frame to initialize writer.", _recorderId);
 }
 
 - (void)stopRecording {
-    NSLog(@"[MediaRecorder-%@] Attempting to stop recording. Current state - isRecording: %@, videoTrack: %@, audioInterceptor: %@",
-          _recorderId, _isRecording ? @"YES" : @"NO", _videoTrack ? @"YES" : @"NO", _audioInterceptor ? @"YES" : @"NO");
+    NSLog(@"[MediaRecorder-%@] Attempting to stop recording. Current state - isRecording: %@, writer initialized: %@",
+          _recorderId, _isRecording ? @"YES" : @"NO", _assetWriter ? @"YES" : @"NO");
     
     if (!_isRecording) {
         NSLog(@"[MediaRecorder-%@] Warning: Not currently recording", _recorderId);
@@ -244,6 +139,12 @@
     }
     
     _isRecording = NO;
+    
+    // Handle case where stop is called before the first frame arrived
+    if (!_assetWriter) {
+        NSLog(@"[MediaRecorder-%@] Stopping recording before writer was initialized (no frames received).", _recorderId);
+        return;
+    }
     
     if (_videoTrack) {
         [_videoTrack removeRenderer:self];
@@ -352,7 +253,12 @@
 }
 
 - (void)renderFrame:(RTCVideoFrame *)frame {
-    if (!_isRecording || !_videoInput.isReadyForMoreMediaData) {
+    // Calculate relative timestamp from start of recording
+    NSTimeInterval elapsedTime = [[NSDate date] timeIntervalSinceDate:_recordingStartTime];
+    CMTime timestamp = CMTimeMakeWithSeconds(elapsedTime, 1000000000);
+
+    // If not recording OR if writer exists but input is not ready, drop frame
+    if (!_isRecording || (_assetWriter && !_videoInput.isReadyForMoreMediaData)) {
         self.droppedFrameCount++;
         if (self.droppedFrameCount % 100 == 0) {
             NSLog(@"[MediaRecorder-%@] Dropped %ld frames", _recorderId, (long)self.droppedFrameCount);
@@ -375,9 +281,6 @@
               frame.height,
               [frame.buffer isKindOfClass:[RTCCVPixelBuffer class]] ? @"CVPixelBuffer" : @"I420Buffer");
     }
-    // Calculate relative timestamp from start of recording
-    NSTimeInterval elapsedTime = [[NSDate date] timeIntervalSinceDate:_recordingStartTime];
-    CMTime timestamp = CMTimeMakeWithSeconds(elapsedTime, 1000000000);
     CVPixelBufferRef pixelBuffer = NULL;
     if ([frame.buffer isKindOfClass:[RTCCVPixelBuffer class]]) {
         RTCCVPixelBuffer *rtcPixelBuffer = (RTCCVPixelBuffer *)frame.buffer;
@@ -407,16 +310,108 @@
         NSLog(@"[MediaRecorder-%@] Warning: Failed to create pixel buffer for frame", _recorderId);
         return;
     }
-    dispatch_async(_videoQueue, ^{
-        if (self.videoInput.isReadyForMoreMediaData) {
-            CMSampleBufferRef sampleBuffer = [self sampleBufferFromPixelBuffer:pixelBuffer
-                                                                   timestamp:timestamp];
+    
+    dispatch_async(_videoQueue, ^{        
+        __block BOOL setupError = NO;
+        __block NSError *localError = nil;
+        
+        // Initialize writer on the first frame
+        if (!self.assetWriter) {
+            NSLog(@"[MediaRecorder-%@] First frame received. Initializing writer with resolution: %.0fx%.0f", 
+                  self.recorderId, frame.width, frame.height);
+            
+            NSURL *fileURL = [NSURL fileURLWithPath:self.filePath];
+            self.assetWriter = [[AVAssetWriter alloc] initWithURL:fileURL fileType:AVFileTypeMPEG4 error:&localError];
+            
+            if (localError) {
+                NSLog(@"[MediaRecorder-%@] Failed to create asset writer: %@", self.recorderId, localError.localizedDescription);
+                setupError = YES;
+            } else {
+                // Configure video settings with detected dimensions
+                NSDictionary *videoSettings = @{
+                    AVVideoCodecKey : AVVideoCodecTypeH264,
+                    AVVideoWidthKey : @(frame.width),
+                    AVVideoHeightKey : @(frame.height),
+                    AVVideoCompressionPropertiesKey : @{
+                        AVVideoAverageBitRateKey : @2000000,
+                        AVVideoMaxKeyFrameIntervalKey : @60,
+                        AVVideoProfileLevelKey : AVVideoProfileLevelH264HighAutoLevel
+                    }
+                };
+                self.videoInput = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeVideo outputSettings:videoSettings];
+                self.videoInput.expectsMediaDataInRealTime = YES;
+                if ([self.assetWriter canAddInput:self.videoInput]) {
+                    [self.assetWriter addInput:self.videoInput];
+                } else {
+                    NSLog(@"[MediaRecorder-%@] Could not add video input to asset writer. Error: %@", self.recorderId, self.assetWriter.error.localizedDescription);
+                    localError = self.assetWriter.error ?: [NSError errorWithDomain:@"MediaRecorder" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Could not add video input"}];
+                    setupError = YES;
+                }
+                
+                // Configure audio settings (if not already error)
+                if (!setupError) {
+                    AudioChannelLayout channelLayout;
+                    memset(&channelLayout, 0, sizeof(AudioChannelLayout));
+                    channelLayout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo;
+                    NSDictionary *audioSettings = @{
+                        AVFormatIDKey: @(kAudioFormatMPEG4AAC),
+                        AVSampleRateKey: @(self.expectedAudioSampleRate),
+                        AVNumberOfChannelsKey: @(self.expectedAudioChannels),
+                        AVChannelLayoutKey: [NSData dataWithBytes:&channelLayout length:sizeof(AudioChannelLayout)],
+                        AVEncoderBitRateKey: @(128000)
+                    };
+                    self.audioInput = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeAudio outputSettings:audioSettings];
+                    self.audioInput.expectsMediaDataInRealTime = YES;
+                    if ([self.assetWriter canAddInput:self.audioInput]) {
+                        [self.assetWriter addInput:self.audioInput];
+                    } else {
+                        NSLog(@"[MediaRecorder-%@] Could not add audio input to asset writer. Error: %@", self.recorderId, self.assetWriter.error.localizedDescription);
+                        localError = self.assetWriter.error ?: [NSError errorWithDomain:@"MediaRecorder" code:9 userInfo:@{NSLocalizedDescriptionKey: @"Could not add audio input"}];
+                        setupError = YES;
+                    }
+                }
+                
+                // Start writing (if not already error)
+                if (!setupError && [self.assetWriter startWriting]) {
+                    [self.assetWriter startSessionAtSourceTime:timestamp]; // Use first frame's timestamp
+                    NSLog(@"[MediaRecorder-%@] Asset writer started successfully.", self.recorderId);
+                } else if (!setupError) {
+                    NSLog(@"[MediaRecorder-%@] Failed to start writing. Error: %@", self.recorderId, self.assetWriter.error.localizedDescription);
+                    localError = self.assetWriter.error ?: [NSError errorWithDomain:@"MediaRecorder" code:7 userInfo:@{NSLocalizedDescriptionKey: @"Failed to start recording"}];
+                    setupError = YES;
+                }
+            }
+        }
+        
+        // Handle setup error or proceed to append buffer
+        if (setupError) {
+            self.isRecording = NO; // Stop recording process
+            if (pixelBuffer) { 
+                CVPixelBufferRelease(pixelBuffer);
+            }
+            self.assetWriter = nil; // Clean up
+            self.videoInput = nil;
+            self.audioInput = nil;
+            dispatch_async(dispatch_get_main_queue(), ^{ // Call error handler on main thread if needed
+                [self handleRecordingError:localError];
+            });
+        } else if (self.assetWriter && self.videoInput.isReadyForMoreMediaData) {
+            // Append the frame (first or subsequent)
+            CMSampleBufferRef sampleBuffer = [self sampleBufferFromPixelBuffer:pixelBuffer timestamp:timestamp];
             if (sampleBuffer) {
                 [self.videoInput appendSampleBuffer:sampleBuffer];
                 CFRelease(sampleBuffer);
+            } else {
+                 NSLog(@"[MediaRecorder-%@] Warning: Failed to create sample buffer for video frame.", self.recorderId);
             }
+        } else if (self.assetWriter) {
+             // Writer exists but input is not ready (log handled outside the async block)
         }
-        CVPixelBufferRelease(pixelBuffer);
+        
+        // Release the pixel buffer that was retained before dispatching
+        if (!setupError && pixelBuffer) {
+             CVPixelBufferRelease(pixelBuffer);
+        }
     });
 }
 
@@ -501,9 +496,10 @@
     
     audioBufferCounter++;
     
-    if (!_isRecording) {
+    // Don't process if not recording OR if the writer hasn't been initialized yet by the first video frame
+    if (!_isRecording || !_assetWriter) {
         if (audioBufferCounter % 100 == 0) {
-            NSLog(@"[MediaRecorder-%@] Warning: Received audio buffer #%ld but not recording", _recorderId, (long)audioBufferCounter);
+            NSLog(@"[MediaRecorder-%@] Warning: Received audio buffer #%ld but not recording or writer not ready", _recorderId, (long)audioBufferCounter);
         }
         return;
     }
@@ -555,7 +551,7 @@
     CMTime timestamp = CMTimeMakeWithSeconds(elapsedTime, (int32_t)self.expectedAudioSampleRate);
     
     dispatch_async(_audioQueue, ^{
-        if (!self.audioInput.isReadyForMoreMediaData) {
+        if (!self.audioInput || !self.audioInput.isReadyForMoreMediaData) { // Re-check readiness inside queue
             if (audioBufferCounter % 100 == 0) {
                 NSLog(@"[MediaRecorder-%@] Warning: Audio input not ready in async queue. Buffer #%ld dropped", self.recorderId, (long)audioBufferCounter);
             }
@@ -729,6 +725,7 @@
 #pragma mark - Statistics and Error Handling
 
 - (void)handleRecordingError:(NSError *)error {
+    NSLog(@"[MediaRecorder-%@] Recording error encountered: %@", self.recorderId, error.localizedDescription);
     if (self.recordingErrorHandler) {
         self.recordingErrorHandler(error);
     }
