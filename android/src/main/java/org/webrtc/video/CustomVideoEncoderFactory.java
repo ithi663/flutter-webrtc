@@ -1,5 +1,6 @@
 package org.webrtc.video;
 
+import android.util.Log;
 import androidx.annotation.Nullable;
 
 import com.cloudwebrtc.webrtc.SimulcastVideoEncoderFactoryWrapper;
@@ -14,10 +15,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class CustomVideoEncoderFactory implements VideoEncoderFactory {
+    private static final String TAG = "CustomVideoEncoderFactory";
     private SoftwareVideoEncoderFactory softwareVideoEncoderFactory = new SoftwareVideoEncoderFactory();
     private SimulcastVideoEncoderFactoryWrapper simulcastVideoEncoderFactoryWrapper;
 
-    private boolean forceSWCodec  = false;
+    private boolean forceSWCodec = false; // <--- SET TO TRUE FOR TESTING TEMPORARILY
 
     private List<String> forceSWCodecs = new ArrayList<>();
 
@@ -28,6 +30,7 @@ public class CustomVideoEncoderFactory implements VideoEncoderFactory {
     }
 
     public void setForceSWCodec(boolean forceSWCodec) {
+        Log.d(TAG, "setForceSWCodec: " + forceSWCodec);
         this.forceSWCodec = forceSWCodec;
     }
 
@@ -38,16 +41,21 @@ public class CustomVideoEncoderFactory implements VideoEncoderFactory {
     @Nullable
     @Override
     public VideoEncoder createEncoder(VideoCodecInfo videoCodecInfo) {
+        Log.d(TAG, "createEncoder called for: " + videoCodecInfo.name + ", forceSWCodec: " + forceSWCodec);
+        
         if(forceSWCodec) {
+            Log.d(TAG, "Forcing SW encoder for: " + videoCodecInfo.name);
             return softwareVideoEncoderFactory.createEncoder(videoCodecInfo);
         }
 
         if(!forceSWCodecs.isEmpty()) {
             if(forceSWCodecs.contains(videoCodecInfo.name)) {
+                Log.d(TAG, "Forcing SW encoder for specific codec: " + videoCodecInfo.name);
                 return softwareVideoEncoderFactory.createEncoder(videoCodecInfo);
             }
         }
 
+        Log.d(TAG, "Using hardware encoder for: " + videoCodecInfo.name);
         return simulcastVideoEncoderFactoryWrapper.createEncoder(videoCodecInfo);
     }
 

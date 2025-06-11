@@ -11,6 +11,7 @@ import android.view.Surface;
 
 import org.webrtc.EglBase;
 import org.webrtc.GlRectDrawer;
+import org.webrtc.JavaI420Buffer;
 import org.webrtc.VideoFrame;
 import org.webrtc.VideoFrameDrawer;
 import org.webrtc.VideoSink;
@@ -55,6 +56,13 @@ class VideoFileRenderer implements VideoSink, SamplesReadyCallback {
     private volatile boolean muxerStarted = false;
     private long videoFrameStart = 0;
     private volatile boolean isReleasing = false;
+    
+    // Performance optimization: Buffer pool for frame alignment
+    private ByteBuffer cachedAlignedY = null;
+    private ByteBuffer cachedAlignedU = null;
+    private ByteBuffer cachedAlignedV = null;
+    private int cachedWidth = -1;
+    private int cachedHeight = -1;
 
     VideoFileRenderer(String outputFile, final EglBase.Context sharedContext, boolean withAudio) throws IOException {
         renderThread = new HandlerThread(TAG + "RenderThread");
@@ -123,10 +131,136 @@ class VideoFileRenderer implements VideoSink, SamplesReadyCallback {
         if (frameDrawer == null) {
             frameDrawer = new VideoFrameDrawer();
         }
+        
+        // Add stride validation and logging for debugging
+        VideoFrame.Buffer buffer = frame.getBuffer();
+        if (buffer instanceof VideoFrame.I420Buffer) {
+            VideoFrame.I420Buffer i420Buffer = (VideoFrame.I420Buffer) buffer;
+            int width = i420Buffer.getWidth();
+            int height = i420Buffer.getHeight();
+            int strideY = i420Buffer.getStrideY();
+            int strideU = i420Buffer.getStrideU();
+            int strideV = i420Buffer.getStrideV();
+            
+            // Log stride information for debugging
+            Log.d(TAG, String.format("Recording frame: %dx%d, Y stride: %d, U stride: %d, V stride: %d", 
+                width, height, strideY, strideU, strideV));
+            
+            // Check for stride alignment issues that cause green lines
+            int expectedChromaWidth = (width + 1) / 2;
+            if (strideY != width || strideU != expectedChromaWidth || strideV != expectedChromaWidth) {
+                Log.w(TAG, "Stride mismatch detected - this may cause green lines in recording");
+                Log.w(TAG, String.format("Expected: Y=%d, U=%d, V=%d | Actual: Y=%d, U=%d, V=%d", 
+                    width, expectedChromaWidth, expectedChromaWidth, strideY, strideU, strideV));
+                
+                // Create a properly aligned frame to avoid green lines
+                VideoFrame alignedFrame = createAlignedFrame(frame);
+                if (alignedFrame != null) {
+                    frameDrawer.drawFrame(alignedFrame, drawer, null, 0, 0, outputFileWidth, outputFileHeight);
+                    alignedFrame.release();
+                    frame.release();
+                    drainEncoder();
+                    eglBase.swapBuffers();
+                    return;
+                }
+            }
+        }
+        
         frameDrawer.drawFrame(frame, drawer, null, 0, 0, outputFileWidth, outputFileHeight);
         frame.release();
         drainEncoder();
         eglBase.swapBuffers();
+    }
+    
+    /**
+     * Creates a properly aligned video frame to prevent green lines caused by stride misalignment
+     */
+    private VideoFrame createAlignedFrame(VideoFrame originalFrame) {
+        long startTime = System.nanoTime();
+        try {
+            VideoFrame.Buffer buffer = originalFrame.getBuffer();
+            VideoFrame.I420Buffer i420Buffer = buffer.toI420();
+            
+            int width = i420Buffer.getWidth();
+            int height = i420Buffer.getHeight();
+            int chromaWidth = (width + 1) / 2;
+            int chromaHeight = (height + 1) / 2;
+            
+            // Performance optimization: Reuse buffers if dimensions match
+            ByteBuffer alignedY, alignedU, alignedV;
+            if (cachedWidth == width && cachedHeight == height && 
+                cachedAlignedY != null && cachedAlignedU != null && cachedAlignedV != null) {
+                // Reuse existing buffers
+                alignedY = cachedAlignedY;
+                alignedU = cachedAlignedU;
+                alignedV = cachedAlignedV;
+                alignedY.clear();
+                alignedU.clear();
+                alignedV.clear();
+            } else {
+                // Create new buffers and cache them
+                alignedY = ByteBuffer.allocateDirect(width * height);
+                alignedU = ByteBuffer.allocateDirect(chromaWidth * chromaHeight);
+                alignedV = ByteBuffer.allocateDirect(chromaWidth * chromaHeight);
+                cachedAlignedY = alignedY;
+                cachedAlignedU = alignedU;
+                cachedAlignedV = alignedV;
+                cachedWidth = width;
+                cachedHeight = height;
+            }
+            
+            // Copy Y plane row by row to remove stride padding
+            ByteBuffer srcY = i420Buffer.getDataY();
+            int srcStrideY = i420Buffer.getStrideY();
+            for (int row = 0; row < height; row++) {
+                srcY.position(row * srcStrideY);
+                srcY.limit(srcY.position() + width);
+                alignedY.put(srcY);
+            }
+            
+            // Copy U plane row by row to remove stride padding
+            ByteBuffer srcU = i420Buffer.getDataU();
+            int srcStrideU = i420Buffer.getStrideU();
+            for (int row = 0; row < chromaHeight; row++) {
+                srcU.position(row * srcStrideU);
+                srcU.limit(srcU.position() + chromaWidth);
+                alignedU.put(srcU);
+            }
+            
+            // Copy V plane row by row to remove stride padding
+            ByteBuffer srcV = i420Buffer.getDataV();
+            int srcStrideV = i420Buffer.getStrideV();
+            for (int row = 0; row < chromaHeight; row++) {
+                srcV.position(row * srcStrideV);
+                srcV.limit(srcV.position() + chromaWidth);
+                alignedV.put(srcV);
+            }
+            
+            alignedY.rewind();
+            alignedU.rewind();
+            alignedV.rewind();
+            
+            // Create new I420Buffer with aligned data
+            VideoFrame.I420Buffer alignedI420Buffer = JavaI420Buffer.wrap(
+                width, height,
+                alignedY, width,
+                alignedU, chromaWidth,
+                alignedV, chromaWidth,
+                null // release callback
+            );
+            
+            i420Buffer.release();
+            
+            long endTime = System.nanoTime();
+            long durationMicros = (endTime - startTime) / 1000;
+            Log.d(TAG, String.format("Frame alignment took %d μs for %dx%d frame", durationMicros, width, height));
+            
+            return new VideoFrame(alignedI420Buffer, originalFrame.getRotation(), originalFrame.getTimestampNs());
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to create aligned frame", e);
+            return null;
+        }
     }
 
     /**

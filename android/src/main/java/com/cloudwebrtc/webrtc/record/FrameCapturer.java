@@ -8,6 +8,7 @@ import android.graphics.Rect;
 import android.graphics.YuvImage;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import org.webrtc.VideoFrame;
 import org.webrtc.VideoSink;
@@ -40,12 +41,14 @@ public class FrameCapturer implements VideoSink {
 
     @Override
     public void onFrame(VideoFrame videoFrame) {
+
         if (gotFrame)
             return;
         gotFrame = true;
         videoFrame.retain();
 
         executor.submit(() -> {
+
             VideoFrame.Buffer buffer = videoFrame.getBuffer();
             VideoFrame.I420Buffer i420Buffer = buffer.toI420();
             ByteBuffer y = i420Buffer.getDataY();
@@ -62,12 +65,54 @@ public class FrameCapturer implements VideoSink {
             final int chromaHeight = (height + 1) / 2;
             final int minSize = width * height + chromaWidth * chromaHeight * 2;
 
+            // Debug logging to diagnose stride issues
+            Log.d("FrameCapturer", String.format("Video frame: %dx%d, Y stride: %d, U stride: %d, V stride: %d, chromaWidth: %d", 
+                width, height, strides[0], strides[1], strides[2], chromaWidth));
+
             ByteBuffer yuvBuffer = ByteBuffer.allocateDirect(minSize);
             // NV21 is the same as NV12, only that V and U are stored in the reverse order
             // NV21 (YYYYYYYYY:VUVU)
             // NV12 (YYYYYYYYY:UVUV)
             // Therefore we can use the NV12 helper, but swap the U and V input buffers
-            YuvHelper.I420ToNV12(y, strides[0], v, strides[2], u, strides[1], yuvBuffer, width, height);
+            
+            // Fix: Handle stride properly to avoid green lines
+            // When stride != width, we need to copy row by row to avoid color artifacts
+            if (strides[0] == width && strides[1] == chromaWidth && strides[2] == chromaWidth) {
+                // Fast path: stride equals width, can use direct conversion
+                YuvHelper.I420ToNV12(y, strides[0], v, strides[2], u, strides[1], yuvBuffer, width, height);
+            } else {
+                // Slow path: stride != width, need to handle padding
+                ByteBuffer compactY = ByteBuffer.allocateDirect(width * height);
+                ByteBuffer compactU = ByteBuffer.allocateDirect(chromaWidth * chromaHeight);
+                ByteBuffer compactV = ByteBuffer.allocateDirect(chromaWidth * chromaHeight);
+                
+                // Copy Y plane row by row, removing stride padding
+                for (int row = 0; row < height; row++) {
+                    y.position(row * strides[0]);
+                    y.limit(y.position() + width);
+                    compactY.put(y);
+                }
+                
+                // Copy U plane row by row, removing stride padding
+                for (int row = 0; row < chromaHeight; row++) {
+                    u.position(row * strides[1]);
+                    u.limit(u.position() + chromaWidth);
+                    compactU.put(u);
+                }
+                
+                // Copy V plane row by row, removing stride padding
+                for (int row = 0; row < chromaHeight; row++) {
+                    v.position(row * strides[2]);
+                    v.limit(v.position() + chromaWidth);
+                    compactV.put(v);
+                }
+                
+                compactY.rewind();
+                compactU.rewind();
+                compactV.rewind();
+                
+                YuvHelper.I420ToNV12(compactY, width, compactV, chromaWidth, compactU, chromaWidth, yuvBuffer, width, height);
+            }
 
             // For some reason the ByteBuffer may have leading 0. We remove them as
             // otherwise the image will be shifted
@@ -78,8 +123,7 @@ public class FrameCapturer implements VideoSink {
                 ImageFormat.NV21,
                 width,
                 height,
-                // We omit the strides here. If they were included, the resulting image would
-                // have its colors offset.
+                // Now we can safely omit strides since we've handled the padding
                 null);
             i420Buffer.release();
             videoFrame.release();

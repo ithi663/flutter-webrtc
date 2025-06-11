@@ -32,6 +32,7 @@ public class MediaRecorderImpl {
         //noinspection ResultOfMethodCallIgnored
         file.getParentFile().mkdirs();
         if (videoTrack != null) {
+            Log.d(TAG, "Starting video recording to: " + file.getAbsolutePath());
             videoFileRenderer = new VideoFileRenderer(
                 file.getAbsolutePath(),
                 EglUtils.getRootEglBaseContext(),
