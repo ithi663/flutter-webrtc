@@ -61,6 +61,28 @@ class VideoFileRenderer implements VideoSink, SamplesReadyCallback {
     private ByteBuffer cachedAlignedY = null;
     private ByteBuffer cachedAlignedU = null;
     private ByteBuffer cachedAlignedV = null;
+    
+
+    // Frame buffering for encoder queue management
+    private final Object frameBufferLock = new Object();
+    private VideoFrame lastValidFrame = null;
+    private long lastFrameTimestamp = 0;
+    private int droppedFrameCount = 0;
+    private boolean encoderOverloaded = false;
+    private static final int MAX_DROPPED_FRAMES = 3;
+    private static final long FRAME_TIMEOUT_MS = 100; // 100ms timeout
+
+    // Additional monitoring for encoder queue overflow pattern
+    private long lastEncoderErrorTime = 0;
+    private int consecutiveEncoderErrors = 0;
+    private static final int MAX_CONSECUTIVE_ENCODER_ERRORS = 6; // Based on your logs showing 6 consecutive drops
+    private static final long ENCODER_ERROR_RESET_TIME_MS = 2000; // 2 seconds to reset error count
+
+    // Buffer pool for performance optimization
+    private final Object bufferPoolLock = new Object();
+    private ByteBuffer cachedYBuffer = null;
+    private ByteBuffer cachedUBuffer = null;
+    private ByteBuffer cachedVBuffer = null;
     private int cachedWidth = -1;
     private int cachedHeight = -1;
 
@@ -132,46 +154,144 @@ class VideoFileRenderer implements VideoSink, SamplesReadyCallback {
             frameDrawer = new VideoFrameDrawer();
         }
         
-        // Add stride validation and logging for debugging
-        VideoFrame.Buffer buffer = frame.getBuffer();
-        if (buffer instanceof VideoFrame.I420Buffer) {
+        synchronized (frameBufferLock) {
+            long currentTime = System.currentTimeMillis();
+            
+            // Reset encoder error count if enough time has passed
+            if (currentTime - lastEncoderErrorTime > ENCODER_ERROR_RESET_TIME_MS) {
+                if (consecutiveEncoderErrors > 0) {
+                    Log.d(TAG, "Resetting encoder error count after recovery period");
+                    consecutiveEncoderErrors = 0;
+                }
+            }
+            
+            // Check if encoder is overloaded based on timing
+            if (currentTime - lastFrameTimestamp > FRAME_TIMEOUT_MS) {
+                if (droppedFrameCount > 0) {
+                    Log.w(TAG, "Encoder recovered from overload, dropped frames: " + droppedFrameCount);
+                    encoderOverloaded = false;
+                    droppedFrameCount = 0;
+                }
+            }
+            
+            // Validate frame integrity before processing
+            VideoFrame processedFrame = validateAndFixFrame(frame);
+            if (processedFrame == null) {
+                Log.w(TAG, "Frame validation failed, using last valid frame");
+                consecutiveEncoderErrors++;
+                lastEncoderErrorTime = currentTime;
+                
+                if (lastValidFrame != null && !encoderOverloaded) {
+                    processedFrame = lastValidFrame;
+                    droppedFrameCount++;
+                } else {
+                    return; // Skip corrupted frame
+                }
+            }
+            
+            // Detect encoder overload pattern (like the 6 consecutive drops in your logs)
+            if (droppedFrameCount >= MAX_DROPPED_FRAMES || consecutiveEncoderErrors >= MAX_CONSECUTIVE_ENCODER_ERRORS) {
+                if (!encoderOverloaded) {
+                    Log.w(TAG, String.format("Encoder overload detected - dropped: %d, errors: %d", 
+                        droppedFrameCount, consecutiveEncoderErrors));
+                    encoderOverloaded = true;
+                }
+                
+                // Implement adaptive frame skipping based on overload severity
+                int skipRatio = Math.min(4, Math.max(2, consecutiveEncoderErrors / 2));
+                if (droppedFrameCount % skipRatio == 0) {
+                    Log.d(TAG, String.format("Skipping frame due to encoder overload (skip ratio: %d)", skipRatio));
+                    droppedFrameCount++;
+                    return;
+                }
+            }
+            
+            try {
+                // Store last valid frame for recovery
+                if (processedFrame != null && !encoderOverloaded) {
+                    if (lastValidFrame != null) {
+                        lastValidFrame.release();
+                    }
+                    lastValidFrame = new VideoFrame(processedFrame.getBuffer(), 
+                                                  processedFrame.getRotation(), 
+                                                  processedFrame.getTimestampNs());
+                }
+                
+                frameDrawer.drawFrame(processedFrame, drawer, null, 0, 0, outputFileWidth, outputFileHeight);
+                lastFrameTimestamp = currentTime;
+                
+                // Reset counters on successful render
+                if (droppedFrameCount > 0) {
+                    droppedFrameCount = Math.max(0, droppedFrameCount - 1);
+                }
+                if (consecutiveEncoderErrors > 0) {
+                    consecutiveEncoderErrors = Math.max(0, consecutiveEncoderErrors - 1);
+                }
+                
+            } catch (Exception e) {
+                Log.e(TAG, "Error rendering frame: " + e.getMessage());
+                droppedFrameCount++;
+                consecutiveEncoderErrors++;
+                lastEncoderErrorTime = currentTime;
+                
+                if (droppedFrameCount > MAX_DROPPED_FRAMES || consecutiveEncoderErrors >= MAX_CONSECUTIVE_ENCODER_ERRORS) {
+                    encoderOverloaded = true;
+                }
+            }
+        }
+    }
+
+    /**
+     * Validates frame integrity and fixes stride issues without breaking the stream
+     */
+    private VideoFrame validateAndFixFrame(VideoFrame frame) {
+        if (frame == null || frame.getBuffer() == null) {
+            return null;
+        }
+        
+        try {
+            VideoFrame.Buffer buffer = frame.getBuffer();
+            if (!(buffer instanceof VideoFrame.I420Buffer)) {
+                // Convert to I420 if needed
+                VideoFrame.I420Buffer i420Buffer = buffer.toI420();
+                return new VideoFrame(i420Buffer, frame.getRotation(), frame.getTimestampNs());
+            }
+            
             VideoFrame.I420Buffer i420Buffer = (VideoFrame.I420Buffer) buffer;
             int width = i420Buffer.getWidth();
             int height = i420Buffer.getHeight();
             int strideY = i420Buffer.getStrideY();
             int strideU = i420Buffer.getStrideU();
             int strideV = i420Buffer.getStrideV();
-            
-            // Log stride information for debugging
-            Log.d(TAG, String.format("Recording frame: %dx%d, Y stride: %d, U stride: %d, V stride: %d", 
-                width, height, strideY, strideU, strideV));
-            
-            // Check for stride alignment issues that cause green lines
             int expectedChromaWidth = (width + 1) / 2;
-            if (strideY != width || strideU != expectedChromaWidth || strideV != expectedChromaWidth) {
-                Log.w(TAG, "Stride mismatch detected - this may cause green lines in recording");
-                Log.w(TAG, String.format("Expected: Y=%d, U=%d, V=%d | Actual: Y=%d, U=%d, V=%d", 
-                    width, expectedChromaWidth, expectedChromaWidth, strideY, strideU, strideV));
+            
+            // Check for stride misalignment (the green lines cause)
+            boolean needsAlignment = (strideY != width || 
+                                    strideU != expectedChromaWidth || 
+                                    strideV != expectedChromaWidth);
+            
+            if (needsAlignment) {
+                Log.d(TAG, String.format("Frame alignment needed: %dx%d, strides Y:%d U:%d V:%d", 
+                    width, height, strideY, strideU, strideV));
                 
-                // Create a properly aligned frame to avoid green lines
-                VideoFrame alignedFrame = createAlignedFrame(frame);
-                if (alignedFrame != null) {
-                    frameDrawer.drawFrame(alignedFrame, drawer, null, 0, 0, outputFileWidth, outputFileHeight);
-                    alignedFrame.release();
-                    frame.release();
-                    drainEncoder();
-                    eglBase.swapBuffers();
-                    return;
+                // Only create aligned frame if we have valid dimensions
+                if (width > 0 && height > 0 && strideY >= width && 
+                    strideU >= expectedChromaWidth && strideV >= expectedChromaWidth) {
+                    return createAlignedFrame(frame);
+                } else {
+                    Log.w(TAG, "Invalid frame dimensions, skipping alignment");
+                    return null;
                 }
             }
+            
+            return frame; // Frame is already properly aligned
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Frame validation error: " + e.getMessage());
+            return null;
         }
-        
-        frameDrawer.drawFrame(frame, drawer, null, 0, 0, outputFileWidth, outputFileHeight);
-        frame.release();
-        drainEncoder();
-        eglBase.swapBuffers();
     }
-    
+
     /**
      * Creates a properly aligned video frame to prevent green lines caused by stride misalignment
      */
@@ -266,7 +386,33 @@ class VideoFileRenderer implements VideoSink, SamplesReadyCallback {
     /**
      * Release all resources. All already posted frames will be rendered first.
      */
-    void release() {
+    public void release() {
+        synchronized (frameBufferLock) {
+            // Clean up frame buffer resources
+            if (lastValidFrame != null) {
+                lastValidFrame.release();
+                lastValidFrame = null;
+            }
+            encoderOverloaded = false;
+            droppedFrameCount = 0;
+        }
+        
+        // Clean up buffer pool
+        synchronized (bufferPoolLock) {
+            if (cachedYBuffer != null) {
+                cachedYBuffer.clear();
+                cachedYBuffer = null;
+            }
+            if (cachedUBuffer != null) {
+                cachedUBuffer.clear();
+                cachedUBuffer = null;
+            }
+            if (cachedVBuffer != null) {
+                cachedVBuffer.clear();
+                cachedVBuffer = null;
+            }
+        }
+        
         isRunning = false;
         isReleasing = true;
         

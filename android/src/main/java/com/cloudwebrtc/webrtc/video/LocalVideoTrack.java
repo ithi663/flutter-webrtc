@@ -15,7 +15,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
-public class LocalVideoTrack extends LocalTrack implements VideoProcessor {
+public class LocalVideoTrack extends LocalTrack implements VideoProcessor, VideoSink {
     private static final String TAG = "LocalVideoTrack";
     
     public interface ExternalVideoFrameProcessing {
@@ -32,6 +32,8 @@ public class LocalVideoTrack extends LocalTrack implements VideoProcessor {
     }
 
     List<ExternalVideoFrameProcessing> processors = new ArrayList<>();
+    private ExternalVideoFrameProcessing externalVideoFrameProcessing = null;
+    private List<VideoSink> sinks = new ArrayList<>();
 
     public void addProcessor(ExternalVideoFrameProcessing processor) {
         synchronized (processors) {
@@ -42,6 +44,22 @@ public class LocalVideoTrack extends LocalTrack implements VideoProcessor {
     public void removeProcessor(ExternalVideoFrameProcessing processor) {
         synchronized (processors) {
             processors.remove(processor);
+        }
+    }
+
+    public void setExternalVideoFrameProcessing(ExternalVideoFrameProcessing processing) {
+        this.externalVideoFrameProcessing = processing;
+    }
+
+    public void addSink(VideoSink sink) {
+        synchronized (sinks) {
+            sinks.add(sink);
+        }
+    }
+
+    public void removeSink(VideoSink sink) {
+        synchronized (sinks) {
+            sinks.remove(sink);
         }
     }
 
@@ -58,54 +76,163 @@ public class LocalVideoTrack extends LocalTrack implements VideoProcessor {
     @Override
     public void onCapturerStopped() {}
 
+    // Frame buffering for live translation stability
+    private final Object liveFrameBufferLock = new Object();
+    private VideoFrame lastValidLiveFrame = null;
+    private long lastLiveFrameTimestamp = 0;
+    private int liveDroppedFrameCount = 0;
+    private boolean liveEncoderOverloaded = false;
+    private static final int MAX_LIVE_DROPPED_FRAMES = 2; // More aggressive for live
+    private static final long LIVE_FRAME_TIMEOUT_MS = 50; // 50ms timeout for live
+
     @Override
-    public void onFrameCaptured(VideoFrame videoFrame) {
-        if (sink != null) {
-            // Validate and fix stride alignment before processing
-            VideoFrame processedFrame = validateAndFixStride(videoFrame);
+    public void onFrame(VideoFrame frame) {
+        synchronized (liveFrameBufferLock) {
+            long currentTime = System.currentTimeMillis();
             
-            synchronized (processors) {
-                for (ExternalVideoFrameProcessing processor : processors) {
-                    processedFrame = processor.onFrame(processedFrame);
+            // Check if live encoder recovered from overload
+            if (currentTime - lastLiveFrameTimestamp > LIVE_FRAME_TIMEOUT_MS) {
+                if (liveDroppedFrameCount > 0) {
+                    Log.d(TAG, "Live encoder recovered, dropped frames: " + liveDroppedFrameCount);
+                    liveEncoderOverloaded = false;
+                    liveDroppedFrameCount = 0;
                 }
             }
-            sink.onFrame(processedFrame);
+            
+            // Validate and fix frame for live translation
+            VideoFrame processedFrame = validateAndFixLiveFrame(frame);
+            if (processedFrame == null) {
+                Log.w(TAG, "Live frame validation failed");
+                if (lastValidLiveFrame != null && !liveEncoderOverloaded) {
+                    processedFrame = lastValidLiveFrame;
+                    liveDroppedFrameCount++;
+                } else {
+                    return; // Skip corrupted frame
+                }
+            }
+            
+            // Detect live encoder overload
+            if (liveDroppedFrameCount >= MAX_LIVE_DROPPED_FRAMES) {
+                if (!liveEncoderOverloaded) {
+                    Log.w(TAG, "Live encoder overload detected");
+                    liveEncoderOverloaded = true;
+                }
+                
+                // More aggressive frame skipping for live translation
+                if (liveDroppedFrameCount % 3 == 0) {
+                    Log.d(TAG, "Skipping live frame due to overload");
+                    liveDroppedFrameCount++;
+                    return;
+                }
+            }
+            
+            try {
+                // Store last valid frame for live recovery
+                if (processedFrame != null && !liveEncoderOverloaded) {
+                    if (lastValidLiveFrame != null) {
+                        lastValidLiveFrame.release();
+                    }
+                    lastValidLiveFrame = new VideoFrame(processedFrame.getBuffer(), 
+                                                      processedFrame.getRotation(), 
+                                                      processedFrame.getTimestampNs());
+                }
+                
+                // Process external video frame processing if available
+                synchronized (processors) {
+                    for (ExternalVideoFrameProcessing processor : processors) {
+                        processedFrame = processor.onFrame(processedFrame);
+                    }
+                }
+                
+                // Send to main sink if available
+                if (sink != null) {
+                    sink.onFrame(processedFrame);
+                }
+                
+                // Send to additional sinks
+                synchronized (sinks) {
+                    for (VideoSink videoSink : sinks) {
+                        videoSink.onFrame(processedFrame);
+                    }
+                }
+                
+                lastLiveFrameTimestamp = currentTime;
+                
+                // Reset dropped frame count on successful processing
+                if (liveDroppedFrameCount > 0) {
+                    liveDroppedFrameCount = Math.max(0, liveDroppedFrameCount - 1);
+                }
+                
+            } catch (Exception e) {
+                Log.e(TAG, "Error processing live frame: " + e.getMessage());
+                liveDroppedFrameCount++;
+                if (liveDroppedFrameCount > MAX_LIVE_DROPPED_FRAMES) {
+                    liveEncoderOverloaded = true;
+                }
+            }
         }
     }
-    
+
     /**
-     * Validates frame stride alignment and fixes it if necessary to prevent green lines
+     * Validates and fixes frame issues for live translation without breaking the stream
      */
-    private VideoFrame validateAndFixStride(VideoFrame originalFrame) {
-        VideoFrame.Buffer buffer = originalFrame.getBuffer();
-        if (buffer instanceof VideoFrame.I420Buffer) {
+    private VideoFrame validateAndFixLiveFrame(VideoFrame frame) {
+        if (frame == null || frame.getBuffer() == null) {
+            return null;
+        }
+        
+        try {
+            VideoFrame.Buffer buffer = frame.getBuffer();
+            if (!(buffer instanceof VideoFrame.I420Buffer)) {
+                VideoFrame.I420Buffer i420Buffer = buffer.toI420();
+                return new VideoFrame(i420Buffer, frame.getRotation(), frame.getTimestampNs());
+            }
+            
             VideoFrame.I420Buffer i420Buffer = (VideoFrame.I420Buffer) buffer;
             int width = i420Buffer.getWidth();
             int height = i420Buffer.getHeight();
             int strideY = i420Buffer.getStrideY();
             int strideU = i420Buffer.getStrideU();
             int strideV = i420Buffer.getStrideV();
-            
-            // Log stride information for debugging
-            Log.d(TAG, String.format("Live frame: %dx%d, Y stride: %d, U stride: %d, V stride: %d", 
-                width, height, strideY, strideU, strideV));
-            
-            // Check for stride alignment issues that cause green lines
             int expectedChromaWidth = (width + 1) / 2;
-            if (strideY != width || strideU != expectedChromaWidth || strideV != expectedChromaWidth) {
-                Log.w(TAG, "Stride mismatch detected in live translation - fixing to prevent green lines");
-                Log.w(TAG, String.format("Expected: Y=%d, U=%d, V=%d | Actual: Y=%d, U=%d, V=%d", 
-                    width, expectedChromaWidth, expectedChromaWidth, strideY, strideU, strideV));
+            
+            // Check for stride misalignment in live translation
+            boolean needsAlignment = (strideY != width || 
+                                    strideU != expectedChromaWidth || 
+                                    strideV != expectedChromaWidth);
+            
+            if (needsAlignment) {
+                Log.d(TAG, String.format("Live frame alignment needed: %dx%d, strides Y:%d U:%d V:%d", 
+                    width, height, strideY, strideU, strideV));
                 
-                // Create a properly aligned frame
-                VideoFrame alignedFrame = createAlignedFrame(originalFrame);
-                if (alignedFrame != null) {
-                    return alignedFrame;
+                if (width > 0 && height > 0 && strideY >= width && 
+                    strideU >= expectedChromaWidth && strideV >= expectedChromaWidth) {
+                    return createAlignedFrame(frame);
+                } else {
+                    Log.w(TAG, "Invalid live frame dimensions, skipping alignment");
+                    return null;
                 }
             }
+            
+            return frame; // Frame is already properly aligned
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Live frame validation error: " + e.getMessage());
+            return null;
         }
-        
-        return originalFrame;
+    }
+
+    @Override
+    public void onFrameCaptured(VideoFrame videoFrame) {
+        if (sink != null) {
+            synchronized (processors) {
+                VideoFrame processedFrame = videoFrame;
+                for (ExternalVideoFrameProcessing processor : processors) {
+                    processedFrame = processor.onFrame(processedFrame);
+                }
+                sink.onFrame(processedFrame);
+            }
+        }
     }
     
     /**
@@ -178,6 +305,20 @@ public class LocalVideoTrack extends LocalTrack implements VideoProcessor {
         } catch (Exception e) {
             Log.e(TAG, "Failed to create aligned frame for live translation", e);
             return null;
+        }
+    }
+    
+    /**
+     * Clean up resources when the track is disposed
+     */
+    public void dispose() {
+        synchronized (liveFrameBufferLock) {
+            if (lastValidLiveFrame != null) {
+                lastValidLiveFrame.release();
+                lastValidLiveFrame = null;
+            }
+            liveEncoderOverloaded = false;
+            liveDroppedFrameCount = 0;
         }
     }
 }
