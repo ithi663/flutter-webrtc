@@ -76,6 +76,10 @@ class HardwareVideoEncoder implements VideoEncoder {
    private static final long ENCODER_STUCK_TIMEOUT_MS = 2000; // 2 seconds - more aggressive
    private int consecutiveStuckChecks = 0;
    private static final int MAX_STUCK_CHECKS = 3; // Force restart after 3 consecutive stuck detections
+   
+   // Track when queue becomes full for immediate recovery
+   private long queueFullSinceMs = 0;
+   private static final long QUEUE_FULL_TIMEOUT_MS = 1000; // 1 second at full capacity triggers immediate restart
 
    public HardwareVideoEncoder(MediaCodecWrapperFactory mediaCodecWrapperFactory, String codecName, VideoCodecMimeType codecType, Integer surfaceColorFormat, Integer yuvColorFormat, Map<String, String> params, int keyFrameIntervalSec, int forceKeyFrameIntervalMs, BitrateAdjuster bitrateAdjuster, EglBase14.Context sharedContext) {
       this.mediaCodecWrapperFactory = mediaCodecWrapperFactory;
@@ -120,6 +124,7 @@ class HardwareVideoEncoder implements VideoEncoder {
       this.isEncodingStatisticsEnabled = false;
       this.lastOutputBufferTimeMs = System.currentTimeMillis();
       this.consecutiveStuckChecks = 0;
+      this.queueFullSinceMs = 0;
 
       try {
          this.codec = this.mediaCodecWrapperFactory.createByCodecName(this.codecName);
@@ -288,8 +293,17 @@ class HardwareVideoEncoder implements VideoEncoder {
          
          // Absolute hard limit - never allow queue to grow beyond this
          if (currentQueueSize >= MAX_ENCODER_Q_SIZE) {
+            // Track how long queue has been full
+            if (this.queueFullSinceMs == 0) {
+               this.queueFullSinceMs = currentTime;
+               Logging.w("HardwareVideoEncoder", "Encoder queue reached hard limit, starting timeout tracking");
+            }
+            
             Logging.e("HardwareVideoEncoder", "Dropped frame, encoder queue at hard limit (size: " + currentQueueSize + ")");
             return VideoCodecStatus.NO_OUTPUT;
+         } else {
+            // Reset queue full tracking when queue has space
+            this.queueFullSinceMs = 0;
          }
          
          // Early prevention: if queue is approaching full and encoder isn't producing output
@@ -300,22 +314,29 @@ class HardwareVideoEncoder implements VideoEncoder {
             return VideoCodecStatus.NO_OUTPUT;
          }
          
-         // Stuck detection with progressive recovery
+         // More aggressive stuck detection - trigger when queue is near full
          if (currentQueueSize >= (MAX_ENCODER_Q_SIZE - 2)) {
-            // Check for multiple types of stuck conditions
+            // Check for multiple types of stuck conditions with more lenient timeouts
             boolean queueStuck = (currentTime - this.lastSuccessfulEncodeTimeMs > ENCODER_STUCK_TIMEOUT_MS);
             boolean outputStuck = (currentTime - this.lastOutputBufferTimeMs > ENCODER_STUCK_TIMEOUT_MS);
             
-            if (queueStuck || outputStuck) {
+            // Also check if queue is completely full for immediate action
+            boolean queueFull = (currentQueueSize >= MAX_ENCODER_Q_SIZE);
+            boolean queueFullTooLong = (this.queueFullSinceMs > 0 && currentTime - this.queueFullSinceMs > QUEUE_FULL_TIMEOUT_MS);
+            
+            if (queueStuck || outputStuck || queueFull || queueFullTooLong) {
                this.consecutiveStuckChecks++;
                isEncoderStuck = true;
                
                Logging.w("HardwareVideoEncoder", "Encoder stuck detection #" + this.consecutiveStuckChecks + 
-                        " - Queue stuck: " + queueStuck + " (" + (currentTime - this.lastSuccessfulEncodeTimeMs) + "ms)" +
-                        ", Output stuck: " + outputStuck + " (" + (currentTime - this.lastOutputBufferTimeMs) + "ms)");
+                        " - Queue: " + currentQueueSize + "/" + MAX_ENCODER_Q_SIZE +
+                        ", Queue stuck: " + queueStuck + " (" + (currentTime - this.lastSuccessfulEncodeTimeMs) + "ms)" +
+                        ", Output stuck: " + outputStuck + " (" + (currentTime - this.lastOutputBufferTimeMs) + "ms)" +
+                        ", Queue full: " + queueFull + ", Queue full too long: " + queueFullTooLong + 
+                        (this.queueFullSinceMs > 0 ? " (" + (currentTime - this.queueFullSinceMs) + "ms)" : ""));
                
-               if (this.consecutiveStuckChecks >= MAX_STUCK_CHECKS) {
-                  Logging.e("HardwareVideoEncoder", "Encoder permanently stuck after " + this.consecutiveStuckChecks + " checks, forcing restart");
+               if (this.consecutiveStuckChecks >= MAX_STUCK_CHECKS || queueFull || queueFullTooLong) {
+                  Logging.e("HardwareVideoEncoder", "Encoder permanently stuck after " + this.consecutiveStuckChecks + " checks (or queue issues), forcing restart");
                   
                   // Force a complete codec restart to recover
                   try {
@@ -325,6 +346,7 @@ class HardwareVideoEncoder implements VideoEncoder {
                         this.consecutiveStuckChecks = 0;
                         this.lastSuccessfulEncodeTimeMs = currentTime;
                         this.lastOutputBufferTimeMs = currentTime;
+                        this.queueFullSinceMs = 0;
                         // Don't return immediately, try to encode this frame
                      } else {
                         Logging.e("HardwareVideoEncoder", "Failed to restart stuck encoder: " + resetStatus);
@@ -338,6 +360,7 @@ class HardwareVideoEncoder implements VideoEncoder {
                    // Progressive recovery attempts
                    this.outputBuilders.clear();
                    this.lastSuccessfulEncodeTimeMs = currentTime;
+                   this.queueFullSinceMs = 0;
                    
                    if (this.consecutiveStuckChecks == 1) {
                       // First attempt: Try to kickstart with keyframe
@@ -345,7 +368,7 @@ class HardwareVideoEncoder implements VideoEncoder {
                          Bundle b = new Bundle();
                          b.putInt("request-sync", 0);
                          this.codec.setParameters(b);
-                         Logging.d("HardwareVideoEncoder", "Requested keyframe for stuck recovery #" + this.consecutiveStuckChecks);
+                         Logging.w("HardwareVideoEncoder", "Requested keyframe for stuck recovery #" + this.consecutiveStuckChecks);
                       } catch (Exception e) {
                          Logging.e("HardwareVideoEncoder", "Failed to request keyframe for recovery", e);
                       }
