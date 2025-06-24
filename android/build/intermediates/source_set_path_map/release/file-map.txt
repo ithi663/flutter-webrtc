@@ -1,0 +1,7 @@
+com.cloudwebrtc.webrtc-pngs-0 /Users/ihartsikhan/development/flutter/flutter-webrtc/android/build/generated/res/pngs/release
+com.cloudwebrtc.webrtc-resValues-1 /Users/ihartsikhan/development/flutter/flutter-webrtc/android/build/generated/res/resValues/release
+com.cloudwebrtc.webrtc-mergeReleaseResources-2 /Users/ihartsikhan/development/flutter/flutter-webrtc/android/build/intermediates/incremental/release/mergeReleaseResources/merged.dir
+com.cloudwebrtc.webrtc-mergeReleaseResources-3 /Users/ihartsikhan/development/flutter/flutter-webrtc/android/build/intermediates/incremental/release/mergeReleaseResources/stripped.dir
+com.cloudwebrtc.webrtc-merged_res-4 /Users/ihartsikhan/development/flutter/flutter-webrtc/android/build/intermediates/merged_res/release
+com.cloudwebrtc.webrtc-main-5 /Users/ihartsikhan/development/flutter/flutter-webrtc/android/src/main/res
+com.cloudwebrtc.webrtc-release-6 /Users/ihartsikhan/development/flutter/flutter-webrtc/android/src/release/res

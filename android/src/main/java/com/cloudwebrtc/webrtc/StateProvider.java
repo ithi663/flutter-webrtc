@@ -39,4 +39,6 @@ public interface StateProvider {
   Context getApplicationContext();
 
   BinaryMessenger getMessenger();
+
+  void removeStreamFromAllRenderers(String streamId);
 }
