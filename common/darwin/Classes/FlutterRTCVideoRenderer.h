@@ -4,6 +4,7 @@
 #import <WebRTC/RTCVideoFrame.h>
 #import <WebRTC/RTCVideoRenderer.h>
 #import <WebRTC/RTCVideoTrack.h>
+#import "NightVisionProcessor.h"
 
 @interface FlutterRTCVideoRenderer
     : NSObject <FlutterTexture, RTCVideoRenderer, FlutterStreamHandler>
@@ -15,6 +16,10 @@
 @property(nonatomic) int64_t textureId;
 @property(nonatomic, weak) id<FlutterTextureRegistry> registry;
 @property(nonatomic, strong) FlutterEventSink eventSink;
+
+// Night vision support for remote streams
+@property(nonatomic, strong) NightVisionProcessor* _Nullable nightVisionProcessor;
+@property(nonatomic, assign) BOOL remoteNightVisionEnabled;
 
 - (instancetype)initWithTextureRegistry:(id<FlutterTextureRegistry>)registry
                               messenger:(NSObject<FlutterBinaryMessenger>*)messenger;

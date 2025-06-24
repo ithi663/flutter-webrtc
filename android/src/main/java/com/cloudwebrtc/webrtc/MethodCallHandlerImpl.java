@@ -41,6 +41,9 @@ import com.cloudwebrtc.webrtc.video.VideoCapturerInfo;
 import com.cloudwebrtc.webrtc.video.camera.CameraUtils;
 import com.cloudwebrtc.webrtc.video.camera.Point;
 import com.cloudwebrtc.webrtc.video.LocalVideoTrack;
+import com.cloudwebrtc.webrtc.video.NightVisionProcessor;
+import com.cloudwebrtc.webrtc.video.NightVisionRenderer;
+import com.cloudwebrtc.webrtc.video.NightVisionVideoSink;
 import com.twilio.audioswitch.AudioDevice;
 
 import org.webrtc.AudioTrack;
@@ -927,6 +930,130 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
         } else {
           resultError("captureFrame", "Track is null", result);
         }
+        break;
+      }
+      case "videoTrackSetNightVision": {
+        String trackId = call.argument("trackId");
+        Boolean enabled = call.argument("enabled");
+        String peerConnectionId = call.argument("peerConnectionId");
+
+        if (trackId == null || enabled == null) {
+          resultError("videoTrackSetNightVision", "Missing required arguments", result);
+          return;
+        }
+
+        LocalTrack localTrack = getLocalTrack(trackId);
+        if (localTrack instanceof LocalVideoTrack) {
+          LocalVideoTrack localVideoTrack = (LocalVideoTrack) localTrack;
+
+          if (enabled) {
+            // Create and add night vision processor if not exists
+            if (localVideoTrack.nightVisionProcessor == null) {
+              localVideoTrack.nightVisionProcessor = new NightVisionProcessor();
+              localVideoTrack.nightVisionProcessor.initialize();
+              localVideoTrack.addProcessor(localVideoTrack.nightVisionProcessor);
+            }
+            localVideoTrack.nightVisionProcessor.setEnabled(true);
+          } else {
+            if (localVideoTrack.nightVisionProcessor != null) {
+              localVideoTrack.nightVisionProcessor.setEnabled(false);
+            }
+          }
+          result.success(null);
+        } else {
+          resultError("videoTrackSetNightVision", "Track not found or not a local video track", result);
+        }
+        break;
+      }
+      case "videoTrackSetNightVisionIntensity": {
+        String trackId = call.argument("trackId");
+        Double intensity = call.argument("intensity");
+        String peerConnectionId = call.argument("peerConnectionId");
+
+        if (trackId == null || intensity == null) {
+          resultError("videoTrackSetNightVisionIntensity", "Missing required arguments", result);
+          return;
+        }
+
+        LocalTrack localTrack = getLocalTrack(trackId);
+        if (localTrack instanceof LocalVideoTrack) {
+          LocalVideoTrack localVideoTrack = (LocalVideoTrack) localTrack;
+          if (localVideoTrack.nightVisionProcessor != null) {
+            localVideoTrack.nightVisionProcessor.setIntensity(intensity.floatValue());
+            result.success(null);
+          } else {
+            resultError("videoTrackSetNightVisionIntensity", "Night vision not initialized", result);
+          }
+        } else {
+          resultError("videoTrackSetNightVisionIntensity", "Track not found", result);
+        }
+        break;
+      }
+      case "videoRendererSetNightVision": {
+        Integer textureId = call.argument("textureId");
+        Boolean enabled = call.argument("enabled");
+        Boolean isRemote = call.argument("isRemote");
+
+        if (textureId == null || enabled == null) {
+          resultError("videoRendererSetNightVision", "Missing required arguments", result);
+          return;
+        }
+
+        FlutterRTCVideoRenderer renderer = renders.get(textureId);
+        if (renderer == null) {
+          resultError("videoRendererSetNightVision", "Renderer not found", result);
+          return;
+        }
+
+        if (isRemote != null && isRemote) {
+          // Handle remote stream night vision
+          if (enabled) {
+            if (renderer.nightVisionVideoSink == null) {
+              NightVisionRenderer nightVisionRenderer = new NightVisionRenderer();
+              nightVisionRenderer.initialize();
+              renderer.nightVisionVideoSink = new NightVisionVideoSink(
+                  renderer.surfaceTextureRenderer, nightVisionRenderer);
+            }
+            renderer.nightVisionVideoSink.setEnabled(true);
+            // Replace the current sink with night vision wrapper
+            if (renderer.videoTrack != null) {
+              renderer.videoTrack.removeSink(renderer.surfaceTextureRenderer);
+              renderer.videoTrack.addSink(renderer.nightVisionVideoSink);
+            }
+          } else {
+            if (renderer.nightVisionVideoSink != null) {
+              renderer.nightVisionVideoSink.setEnabled(false);
+              // Restore original sink
+              if (renderer.videoTrack != null) {
+                renderer.videoTrack.removeSink(renderer.nightVisionVideoSink);
+                renderer.videoTrack.addSink(renderer.surfaceTextureRenderer);
+              }
+            }
+          }
+        }
+        result.success(null);
+        break;
+      }
+      case "videoRendererSetNightVisionIntensity": {
+        Integer textureId = call.argument("textureId");
+        Double intensity = call.argument("intensity");
+        Boolean isRemote = call.argument("isRemote");
+
+        if (textureId == null || intensity == null) {
+          resultError("videoRendererSetNightVisionIntensity", "Missing required arguments", result);
+          return;
+        }
+
+        FlutterRTCVideoRenderer renderer = renders.get(textureId);
+        if (renderer == null) {
+          resultError("videoRendererSetNightVisionIntensity", "Renderer not found", result);
+          return;
+        }
+
+        if (isRemote != null && isRemote && renderer.nightVisionVideoSink != null) {
+          renderer.nightVisionVideoSink.setIntensity(intensity.floatValue());
+        }
+        result.success(null);
         break;
       }
       case "getLocalDescription": {

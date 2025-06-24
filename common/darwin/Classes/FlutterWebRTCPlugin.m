@@ -7,6 +7,7 @@
 #import "FlutterRTCPeerConnection.h"
 #import "FlutterRTCVideoRenderer.h"
 #import "FlutterRTCFrameCryptor.h"
+#import "NightVisionProcessor.h"
 #if TARGET_OS_IPHONE
 #import "FlutterRTCVideoPlatformViewFactory.h"
 #import "FlutterRTCVideoPlatformViewController.h"
@@ -584,7 +585,7 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     NSString* dataChannelId = argsMap[@"dataChannelId"];
 
     [self dataChannelGetBufferedAmount:peerConnectionId dataChannelId:dataChannelId result:result];
-  } 
+  }
   else if ([@"dataChannelClose" isEqualToString:call.method]) {
     NSDictionary* argsMap = call.arguments;
     NSString* peerConnectionId = argsMap[@"peerConnectionId"];
@@ -1000,6 +1001,110 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
                                    details:nil]);
       }
     }
+  } else if ([@"videoTrackSetNightVision" isEqualToString:call.method]) {
+    NSDictionary* argsMap = call.arguments;
+    NSString* trackId = argsMap[@"trackId"];
+    BOOL enabled = [argsMap[@"enabled"] boolValue];
+    NSString* peerConnectionId = argsMap[@"peerConnectionId"];
+
+    id<LocalTrack> track = self.localTracks[trackId];
+    if (track != nil && [track isKindOfClass:[LocalVideoTrack class]]) {
+      LocalVideoTrack* localVideoTrack = (LocalVideoTrack*)track;
+
+      if (enabled) {
+        // Create and initialize night vision processor if not exists
+        if (localVideoTrack.nightVisionProcessor == nil) {
+          localVideoTrack.nightVisionProcessor = [[NightVisionProcessor alloc] init];
+          [localVideoTrack.nightVisionProcessor setEnabled:YES];
+          // Add the processor to the video processing pipeline
+          [localVideoTrack addProcessing:localVideoTrack.nightVisionProcessor];
+        } else {
+          [localVideoTrack.nightVisionProcessor setEnabled:YES];
+        }
+      } else {
+        if (localVideoTrack.nightVisionProcessor != nil) {
+          [localVideoTrack.nightVisionProcessor setEnabled:NO];
+          // Remove the processor from the video processing pipeline
+          [localVideoTrack removeProcessing:localVideoTrack.nightVisionProcessor];
+          localVideoTrack.nightVisionProcessor = nil;
+        }
+      }
+      result(nil);
+    } else {
+      result([FlutterError errorWithCode:@"videoTrackSetNightVision: Track not found or not a local video track"
+                                 message:nil
+                                 details:nil]);
+    }
+  } else if ([@"videoTrackSetNightVisionIntensity" isEqualToString:call.method]) {
+    NSDictionary* argsMap = call.arguments;
+    NSString* trackId = argsMap[@"trackId"];
+    float intensity = [argsMap[@"intensity"] floatValue];
+    NSString* peerConnectionId = argsMap[@"peerConnectionId"];
+
+    id<LocalTrack> track = self.localTracks[trackId];
+    if (track != nil && [track isKindOfClass:[LocalVideoTrack class]]) {
+      LocalVideoTrack* localVideoTrack = (LocalVideoTrack*)track;
+      if (localVideoTrack.nightVisionProcessor != nil) {
+        [localVideoTrack.nightVisionProcessor setIntensity:intensity];
+        result(nil);
+      } else {
+        result([FlutterError errorWithCode:@"videoTrackSetNightVisionIntensity: Night vision not initialized"
+                                   message:nil
+                                   details:nil]);
+      }
+    } else {
+      result([FlutterError errorWithCode:@"videoTrackSetNightVisionIntensity: Track not found"
+                                 message:nil
+                                 details:nil]);
+    }
+  } else if ([@"videoRendererSetNightVision" isEqualToString:call.method]) {
+    NSDictionary* argsMap = call.arguments;
+    NSNumber* textureId = argsMap[@"textureId"];
+    BOOL enabled = [argsMap[@"enabled"] boolValue];
+    BOOL isRemote = [argsMap[@"isRemote"] boolValue];
+
+    FlutterRTCVideoRenderer* renderer = self.renders[textureId];
+    if (renderer == nil) {
+      result([FlutterError errorWithCode:@"videoRendererSetNightVision: Renderer not found"
+                                 message:nil
+                                 details:nil]);
+      return;
+    }
+
+    if (isRemote) {
+      // Handle remote stream night vision
+      if (enabled) {
+        if (renderer.nightVisionProcessor == nil) {
+          renderer.nightVisionProcessor = [[NightVisionProcessor alloc] init];
+        }
+        [renderer.nightVisionProcessor setEnabled:YES];
+        renderer.remoteNightVisionEnabled = YES;
+      } else {
+        if (renderer.nightVisionProcessor != nil) {
+          [renderer.nightVisionProcessor setEnabled:NO];
+        }
+        renderer.remoteNightVisionEnabled = NO;
+      }
+    }
+    result(nil);
+  } else if ([@"videoRendererSetNightVisionIntensity" isEqualToString:call.method]) {
+    NSDictionary* argsMap = call.arguments;
+    NSNumber* textureId = argsMap[@"textureId"];
+    float intensity = [argsMap[@"intensity"] floatValue];
+    BOOL isRemote = [argsMap[@"isRemote"] boolValue];
+
+    FlutterRTCVideoRenderer* renderer = self.renders[textureId];
+    if (renderer == nil) {
+      result([FlutterError errorWithCode:@"videoRendererSetNightVisionIntensity: Renderer not found"
+                                 message:nil
+                                 details:nil]);
+      return;
+    }
+
+    if (isRemote && renderer.nightVisionProcessor != nil) {
+      [renderer.nightVisionProcessor setIntensity:intensity];
+    }
+    result(nil);
   } else if ([@"setVolume" isEqualToString:call.method]) {
     NSDictionary* argsMap = call.arguments;
     NSString* trackId = argsMap[@"trackId"];
@@ -1521,10 +1626,10 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     NSNumber* width = call.arguments[@"width"];
     NSNumber* height = call.arguments[@"height"];
     NSNumber* audioChannel = call.arguments[@"audioChannel"];
-    
+
     NSLog(@"[FlutterWebRTC] startRecordToFile called with path: %@, videoTrackId: %@, recorderId: %@, audioChannel: %@",
           path, videoTrackId, recorderId, audioChannel);
-    
+
     if (!path || !recorderId) {
         NSLog(@"[FlutterWebRTC] Error: Invalid arguments - path: %@, recorderId: %@", path, recorderId);
         result([FlutterError errorWithCode:@"startRecordToFile_error"
@@ -1532,7 +1637,7 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
                                  details:nil]);
         return;
     }
-    
+
     RTCVideoTrack* videoTrack = nil;
     if (videoTrackId) {
       RTCMediaStreamTrack* track = [self trackForId:videoTrackId peerConnectionId:peerConnectionId];
@@ -1545,13 +1650,13 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     } else {
       NSLog(@"[FlutterWebRTC] No videoTrackId provided");
     }
-    
+
     id<RTCAudioRenderer> audioInterceptor = nil;
     RecorderAudioChannel channel = RecorderAudioChannelOutput;  // Default value
     if (audioChannel) {
       channel = [audioChannel intValue];
       NSLog(@"[FlutterWebRTC] Setting up audio interceptor for channel: %d", (int)channel);
-      
+
       switch (channel) {
         case RecorderAudioChannelInput:
           audioInterceptor = [[AudioRenderer alloc] init];
@@ -1567,7 +1672,7 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     } else {
       NSLog(@"[FlutterWebRTC] No audioChannel provided, audio will not be recorded");
     }
-    
+
     if (!videoTrack && !audioInterceptor) {
         NSLog(@"[FlutterWebRTC] Error: No valid video or audio track found");
         result([FlutterError errorWithCode:@"startRecordToFile_error"
@@ -1575,26 +1680,26 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
                                  details:nil]);
         return;
     }
-    
+
     MediaRecorderImpl* recorder = [[MediaRecorderImpl alloc] initWithId:recorderId
                                                          videoTrack:videoTrack
                                                     audioInterceptor:audioInterceptor];
-    
+
     // Set the recorder on the audio interceptor
     if (audioInterceptor) {
         [(AudioRenderer *)audioInterceptor setRecorder:recorder];
         NSLog(@"[FlutterWebRTC] Set recorder on audio interceptor");
     }
-    
+
     NSError* error = nil;
     [recorder startRecording:path error:&error];
-    
+
     if (error) {
         NSLog(@"[FlutterWebRTC] Error starting recording: %@", error.localizedDescription);
         if (audioInterceptor) {
             // Clear the recorder reference before removing the audio interceptor
             [(AudioRenderer *)audioInterceptor clearRecorder];
-            
+
             if (channel == RecorderAudioChannelInput) {
                 [AudioManager.sharedInstance.capturePostProcessingAdapter removeAudioRenderer:audioInterceptor];
                 NSLog(@"[FlutterWebRTC] Removed audio interceptor from capture post-processing adapter");
@@ -1612,19 +1717,19 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
                                  details:nil]);
         return;
     }
-    
+
     [self.recorders setObject:recorder forKey:recorderId];
     NSLog(@"[FlutterWebRTC] Successfully started recording with ID: %@", recorderId);
     result(nil);
   } else if ([@"stopRecordToFile" isEqualToString:call.method]) {
     NSNumber* recorderId = call.arguments[@"recorderId"];
     NSLog(@"[FlutterWebRTC] stopRecordToFile called with recorderId: %@", recorderId);
-    
+
     MediaRecorderImpl* recorder = [self.recorders objectForKey:recorderId];
-    
+
     if (recorder) {
       NSLog(@"[FlutterWebRTC] Found recorder with ID: %@", recorderId);
-      
+
       // Get the audio interceptor from the recorder and clear the recorder reference
       id<RTCAudioRenderer> audioInterceptor = [recorder audioInterceptor];
       if (audioInterceptor && [audioInterceptor isKindOfClass:[AudioRenderer class]]) {
@@ -1633,7 +1738,7 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
       } else {
         NSLog(@"[FlutterWebRTC] No audio interceptor found or not of AudioRenderer class");
       }
-      
+
       [recorder stopRecording];
       [self.recorders removeObjectForKey:recorderId];
       NSLog(@"[FlutterWebRTC] Successfully stopped recording with ID: %@", recorderId);
@@ -1913,7 +2018,7 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     NSNumber* maxIPv6Networks = json[@"maxIPv6Networks"];
      config.maxIPv6Networks = [maxIPv6Networks intValue];
   }
-    
+
   // === below is private api in webrtc ===
   if (json[@"tcpCandidatePolicy"] != nil &&
       [json[@"tcpCandidatePolicy"] isKindOfClass:[NSString class]]) {
@@ -2131,7 +2236,7 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
       @"kind" : codec.kind
     }];
   }
-    
+
   NSString *degradationPreference = @"balanced";
   if(parameters.degradationPreference != nil) {
     if ([parameters.degradationPreference intValue] == RTCDegradationPreferenceMaintainFramerate ) {
@@ -2347,7 +2452,7 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
   NSArray<RTCRtpEncodingParameters*>* currentEncodings = parameters.encodings;
   // new encodings
   NSArray* newEncodings = [newParameters objectForKey:@"encodings"];
-    
+
   NSString *degradationPreference = [newParameters objectForKey:@"degradationPreference"];
 
   if( degradationPreference != nil) {

@@ -16,6 +16,7 @@ public class LocalVideoTrack extends LocalTrack implements VideoProcessor {
     public interface ExternalVideoFrameProcessing {
         /**
          * Process a video frame.
+         * 
          * @param frame
          * @return The processed video frame.
          */
@@ -27,6 +28,9 @@ public class LocalVideoTrack extends LocalTrack implements VideoProcessor {
     }
 
     List<ExternalVideoFrameProcessing> processors = new ArrayList<>();
+
+    // Night vision processor for enhancing low-light video
+    public NightVisionProcessor nightVisionProcessor = null;
 
     public void addProcessor(ExternalVideoFrameProcessing processor) {
         synchronized (processors) {
@@ -48,10 +52,12 @@ public class LocalVideoTrack extends LocalTrack implements VideoProcessor {
     }
 
     @Override
-    public void onCapturerStarted(boolean b) {}
+    public void onCapturerStarted(boolean b) {
+    }
 
     @Override
-    public void onCapturerStopped() {}
+    public void onCapturerStopped() {
+    }
 
     @Override
     public void onFrameCaptured(VideoFrame videoFrame) {

@@ -192,6 +192,14 @@
 
 #pragma mark - RTCVideoRenderer methods
 - (void)renderFrame:(RTCVideoFrame*)frame {
+  // Apply night vision processing to remote frames if enabled
+  RTCVideoFrame* processedFrame = frame;
+  if (self.remoteNightVisionEnabled && self.nightVisionProcessor) {
+    processedFrame = [self.nightVisionProcessor processRemoteFrame:frame];
+    if (processedFrame == nil) {
+      processedFrame = frame; // Fallback to original on error
+    }
+  }
 
   os_unfair_lock_lock(&_lock);
   if(_videoTrack == nil) {
@@ -199,7 +207,7 @@
     return;
   }
   if(!_frameAvailable && _pixelBufferRef) {
-    [self copyI420ToCVPixelBuffer:_pixelBufferRef withFrame:frame];
+    [self copyI420ToCVPixelBuffer:_pixelBufferRef withFrame:processedFrame];
     if(_textureId != -1) {
       [_registry textureFrameAvailable:_textureId];
     }

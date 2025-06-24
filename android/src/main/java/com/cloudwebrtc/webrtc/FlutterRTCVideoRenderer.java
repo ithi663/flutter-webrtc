@@ -7,6 +7,7 @@ import android.view.Surface;
 import com.cloudwebrtc.webrtc.utils.AnyThreadSink;
 import com.cloudwebrtc.webrtc.utils.ConstraintsMap;
 import com.cloudwebrtc.webrtc.utils.EglUtils;
+import com.cloudwebrtc.webrtc.video.NightVisionVideoSink;
 
 import java.util.List;
 
@@ -26,6 +27,9 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
     private MediaStream mediaStream;
 
     private String ownerTag;
+
+    // Night vision components for remote stream processing
+    public NightVisionVideoSink nightVisionVideoSink = null;
 
     public void Dispose() {
         Log.d(TAG, "FlutterRTCVideoRenderer.Dispose() - cleaning up renderer resources");
@@ -91,13 +95,13 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
         };
     }
 
-    private final SurfaceTextureRenderer surfaceTextureRenderer;
+    protected final SurfaceTextureRenderer surfaceTextureRenderer;
 
     /**
      * The {@code VideoTrack}, if any, rendered by this
      * {@code FlutterRTCVideoRenderer}.
      */
-    private VideoTrack videoTrack;
+    protected VideoTrack videoTrack;
 
     EventChannel eventChannel;
     EventChannel.EventSink eventSink;
