@@ -15,29 +15,29 @@ class Helper {
   /// Note: Make sure to call this gettet after
   /// navigator.mediaDevices.getUserMedia(), otherwise the devices will not be
   /// listed.
-  static Future<List<MediaDeviceInfo>> get cameras =>
-      enumerateDevices('videoinput');
+  static Future<List<MediaDeviceInfo>> get cameras => enumerateDevices('videoinput');
 
   /// Return the available audiooutputs
   ///
   /// Note: Make sure to call this gettet after
   /// navigator.mediaDevices.getUserMedia(), otherwise the devices will not be
   /// listed.
-  static Future<List<MediaDeviceInfo>> get audiooutputs =>
-      enumerateDevices('audiooutput');
+  static Future<List<MediaDeviceInfo>> get audiooutputs => enumerateDevices('audiooutput');
 
   /// For web implementation, make sure to pass the target deviceId
-  static Future<bool> switchCamera(MediaStreamTrack track,
-      [String? deviceId, MediaStream? stream]) async {
+  static Future<bool> switchCamera(
+    MediaStreamTrack track, [
+    String? deviceId,
+    MediaStream? stream,
+  ]) async {
     if (track.kind != 'video') {
       throw 'The is not a video track => $track';
     }
 
     if (!kIsWeb) {
-      return WebRTC.invokeMethod(
-        'mediaStreamTrackSwitchCamera',
-        <String, dynamic>{'trackId': track.id},
-      ).then((value) => value ?? false);
+      return WebRTC.invokeMethod('mediaStreamTrackSwitchCamera', <String, dynamic>{
+        'trackId': track.id,
+      }).then((value) => value ?? false);
     }
 
     if (deviceId == null) throw 'You need to specify the deviceId';
@@ -57,7 +57,7 @@ class Helper {
 
     var mediaConstraints = {
       'audio': false, // NO need to capture audio again
-      'video': {'deviceId': deviceId}
+      'video': {'deviceId': deviceId},
     };
 
     var newStream = await openCamera(mediaConstraints);
@@ -72,8 +72,7 @@ class Helper {
   static Future<String?> _getActiveVideoDeviceId() async {
     try {
       final devices = await navigator.mediaDevices.enumerateDevices();
-      final videoDevices =
-          devices.where((d) => d.kind == 'videoinput').toList();
+      final videoDevices = devices.where((d) => d.kind == 'videoinput').toList();
 
       if (videoDevices.isEmpty) {
         return null;
@@ -104,20 +103,18 @@ class Helper {
   static Future<void> setZoom(MediaStreamTrack videoTrack, double zoomLevel) =>
       CameraUtils.setZoom(videoTrack, zoomLevel);
 
-  static Future<void> setFocusMode(
-          MediaStreamTrack videoTrack, CameraFocusMode focusMode) =>
+  static Future<void> setFocusMode(MediaStreamTrack videoTrack, CameraFocusMode focusMode) =>
       CameraUtils.setFocusMode(videoTrack, focusMode);
 
-  static Future<void> setFocusPoint(
-          MediaStreamTrack videoTrack, Point<double>? point) =>
+  static Future<void> setFocusPoint(MediaStreamTrack videoTrack, Point<double>? point) =>
       CameraUtils.setFocusPoint(videoTrack, point);
 
   static Future<void> setExposureMode(
-          MediaStreamTrack videoTrack, CameraExposureMode exposureMode) =>
-      CameraUtils.setExposureMode(videoTrack, exposureMode);
+    MediaStreamTrack videoTrack,
+    CameraExposureMode exposureMode,
+  ) => CameraUtils.setExposureMode(videoTrack, exposureMode);
 
-  static Future<void> setExposurePoint(
-          MediaStreamTrack videoTrack, Point<double>? point) =>
+  static Future<void> setExposurePoint(MediaStreamTrack videoTrack, Point<double>? point) =>
       CameraUtils.setExposurePoint(videoTrack, point);
 
   /// Used to select a specific audio output device.
@@ -130,8 +127,7 @@ class Helper {
   /// speaker and the preferred device
   /// web: flutter web can use RTCVideoRenderer.audioOutput instead
   static Future<void> selectAudioOutput(String deviceId) async {
-    await navigator.mediaDevices
-        .selectAudioOutput(AudioOutputOptions(deviceId: deviceId));
+    await navigator.mediaDevices.selectAudioOutput(AudioOutputOptions(deviceId: deviceId));
   }
 
   /// Set audio input device for Flutter native
@@ -148,8 +144,7 @@ class Helper {
 
   /// Ensure audio session
   /// for iOS only
-  static Future<void> ensureAudioSession() =>
-      NativeAudioManagement.ensureAudioSession();
+  static Future<void> ensureAudioSession() => NativeAudioManagement.ensureAudioSession();
 
   /// Enable speakerphone, but use bluetooth if audio output device available
   /// for iOS/Android only
@@ -183,26 +178,27 @@ class Helper {
   /// Must be set before initiating a WebRTC session and cannot be changed
   /// mid session.
   static Future<void> setAndroidAudioConfiguration(
-          AndroidAudioConfiguration androidAudioConfiguration) =>
-      AndroidNativeAudioManagement.setAndroidAudioConfiguration(
-          androidAudioConfiguration);
+    AndroidAudioConfiguration androidAudioConfiguration,
+  ) => AndroidNativeAudioManagement.setAndroidAudioConfiguration(androidAudioConfiguration);
 
   /// After Android app finishes a session, on audio focus loss, clear the active communication device.
   static Future<void> clearAndroidCommunicationDevice() =>
       WebRTC.invokeMethod('clearAndroidCommunicationDevice');
 
   /// Set the audio configuration for iOS
-  static Future<void> setAppleAudioConfiguration(
-          AppleAudioConfiguration appleAudioConfiguration) =>
-      AppleNativeAudioManagement.setAppleAudioConfiguration(
-          appleAudioConfiguration);
+  static Future<void> setAppleAudioConfiguration(AppleAudioConfiguration appleAudioConfiguration) =>
+      AppleNativeAudioManagement.setAppleAudioConfiguration(appleAudioConfiguration);
 
   /// Set the audio configuration for iOS
-  static Future<void> setAppleAudioIOMode(AppleAudioIOMode mode,
-          {bool preferSpeakerOutput = false}) =>
-      AppleNativeAudioManagement.setAppleAudioConfiguration(
-          AppleNativeAudioManagement.getAppleAudioConfigurationForMode(mode,
-              preferSpeakerOutput: preferSpeakerOutput));
+  static Future<void> setAppleAudioIOMode(
+    AppleAudioIOMode mode, {
+    bool preferSpeakerOutput = false,
+  }) => AppleNativeAudioManagement.setAppleAudioConfiguration(
+    AppleNativeAudioManagement.getAppleAudioConfigurationForMode(
+      mode,
+      preferSpeakerOutput: preferSpeakerOutput,
+    ),
+  );
 
   /// Request capture permission for Android
   static Future<bool> requestCapturePermission() async {

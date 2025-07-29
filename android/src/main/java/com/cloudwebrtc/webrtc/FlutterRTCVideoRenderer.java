@@ -8,11 +8,13 @@ import com.cloudwebrtc.webrtc.utils.AnyThreadSink;
 import com.cloudwebrtc.webrtc.utils.ConstraintsMap;
 import com.cloudwebrtc.webrtc.utils.EglUtils;
 import com.cloudwebrtc.webrtc.video.NightVisionVideoSink;
+import com.cloudwebrtc.webrtc.video.NightVisionRenderer;
 
 import java.util.List;
 
 import org.webrtc.EglBase;
 import org.webrtc.MediaStream;
+import org.webrtc.RendererCommon;
 import org.webrtc.RendererCommon.RendererEvents;
 import org.webrtc.VideoTrack;
 
@@ -31,18 +33,10 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
     // Night vision components for remote stream processing
     public NightVisionVideoSink nightVisionVideoSink = null;
 
-    public void Dispose() {
-        Log.d(TAG, "FlutterRTCVideoRenderer.Dispose() - cleaning up renderer resources");
-        // destroy
-        if (surfaceTextureRenderer != null) {
-            surfaceTextureRenderer.release();
-        }
-        if (eventChannel != null)
-            eventChannel.setStreamHandler(null);
-
-        eventSink = null;
-        producer.release();
-    }
+    // Night-vision state for drawer-based GPU processing (Android only)
+    private boolean nightVisionEnabled = false;
+    private NightVisionRenderer nightVisionDrawer = null;
+    private float nightVisionIntensity = 0.7f;
 
     /**
      * The {@code RendererEvents} which listens to rendering events reported by
@@ -280,5 +274,105 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
 
     public String getOwnerTag() {
         return ownerTag;
+    }
+
+    /**
+     * Re-initialise {@link #surfaceTextureRenderer} with a different
+     * {@link RendererCommon.GlDrawer}.
+     * Must be called on UI thread just like the other init helpers in this class.
+     */
+    private void reinitDrawer(RendererCommon.GlDrawer newDrawer) {
+        // Release current GL resources & stop stats logging.
+        surfaceTextureRenderer.release();
+
+        // Re-create with the supplied drawer and the same producer / event callbacks.
+        listenRendererEvents();
+        surfaceTextureRenderer.init(
+                EglUtils.getRootEglBaseContext(),
+                rendererEvents,
+                org.webrtc.EglBase.CONFIG_PLAIN,
+                newDrawer);
+        // Re-bind the Surface so frames start flowing again.
+        surfaceTextureRenderer.surfaceCreated(producer);
+    }
+
+    /** Enable GPU night-vision processing for this renderer. */
+    public void enableNightVision(float intensity) {
+        if (nightVisionEnabled && Math.abs(intensity - nightVisionIntensity) < 0.01f) {
+            return; // already active with same intensity
+        }
+
+        nightVisionIntensity = intensity;
+
+        if (nightVisionDrawer == null) {
+            nightVisionDrawer = new NightVisionRenderer();
+        }
+        nightVisionDrawer.setNightVisionConfig(
+                nightVisionIntensity,
+                0.3f + (nightVisionIntensity * 0.5f), // gamma
+                0.3f, // brightness threshold
+                1.0f + (nightVisionIntensity * 0.8f), // contrast
+                nightVisionIntensity * 0.3f // noiseReduction
+        );
+
+        reinitDrawer(nightVisionDrawer);
+        nightVisionEnabled = true;
+    }
+
+    /** Disable GPU night-vision processing and restore the default drawer. */
+    public void disableNightVision() {
+        if (!nightVisionEnabled)
+            return;
+
+        nightVisionEnabled = false;
+
+        // Restore original GL drawer
+        reinitDrawer(new org.webrtc.GlRectDrawer());
+
+        if (nightVisionDrawer != null) {
+            nightVisionDrawer.release();
+            nightVisionDrawer = null;
+        }
+    }
+
+    /** Update intensity while night-vision is enabled. */
+    public void setNightVisionIntensity(float intensity) {
+        nightVisionIntensity = intensity;
+        if (nightVisionDrawer != null) {
+            nightVisionDrawer.setNightVisionConfig(
+                    nightVisionIntensity,
+                    0.3f + (nightVisionIntensity * 0.5f),
+                    0.3f,
+                    1.0f + (nightVisionIntensity * 0.8f),
+                    nightVisionIntensity * 0.3f);
+        }
+    }
+
+    public boolean isNightVisionEnabled() {
+        return nightVisionEnabled;
+    }
+
+    /**
+     * Dispose and clean up GL resources for this renderer.
+     */
+    public void Dispose() {
+        Log.d(TAG, "FlutterRTCVideoRenderer.Dispose() - cleaning up renderer resources");
+
+        // Ensure night-vision drawer is released.
+        if (nightVisionDrawer != null) {
+            nightVisionDrawer.release();
+            nightVisionDrawer = null;
+        }
+
+        if (surfaceTextureRenderer != null) {
+            surfaceTextureRenderer.release();
+        }
+
+        if (eventChannel != null) {
+            eventChannel.setStreamHandler(null);
+        }
+
+        eventSink = null;
+        producer.release();
     }
 }

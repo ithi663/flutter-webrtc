@@ -14,202 +14,158 @@ public class NightVisionVideoSink implements VideoSink {
     private static final String TAG = "NightVisionVideoSink";
 
     private final VideoSink originalSink;
-    private final NightVisionRenderer processor;
-    private final Object lock = new Object();
-
-    // Night vision settings
+    private final NightVisionRenderer renderer;
     private boolean enabled = false;
-    private float intensity = 0.7f; // 0.0 = disabled, 1.0 = maximum enhancement
-    private float gamma = 0.6f; // Dynamic gamma correction factor
-    private float brightnessThreshold = 0.3f; // Threshold for applying enhancement
+    private float intensity = 0.6f;
+    private boolean configNeedsUpdate = true;
 
-    // Processing statistics
+    // Performance statistics for remote streams
     private long frameCount = 0;
-    private long processingTimeSum = 0;
-    private long lastLogTime = 0;
-    private static final long LOG_INTERVAL = 10000; // Log stats every 10 seconds (less frequent for remote)
+    private long lastStatsTime = 0;
+    private long totalProcessingTime = 0;
 
     /**
      * Create a new night vision video sink wrapper
      *
      * @param originalSink The original video sink to forward processed frames to
-     * @param processor    The night vision renderer for processing frames
      */
-    public NightVisionVideoSink(VideoSink originalSink, NightVisionRenderer processor) {
+    public NightVisionVideoSink(VideoSink originalSink) {
         this.originalSink = originalSink;
-        this.processor = processor;
+        this.renderer = new NightVisionRenderer();
         Log.d(TAG, "NightVisionVideoSink created for remote stream processing");
     }
 
     @Override
     public void onFrame(VideoFrame frame) {
-        synchronized (lock) {
-            VideoFrame processedFrame = frame;
+        if (!enabled || intensity <= 0.0f) {
+            // Pass through without processing
+            originalSink.onFrame(frame);
+            return;
+        }
 
-            if (enabled && processor != null) {
-                long startTime = System.nanoTime();
+        long startTime = System.nanoTime();
 
-                try {
-                    // Set processor settings before processing
-                    processor.setIntensity(intensity);
-                    processedFrame = processor.processFrame(frame);
-
-                    // Update statistics
-                    frameCount++;
-                    long processingTime = System.nanoTime() - startTime;
-                    processingTimeSum += processingTime;
-
-                    // Log performance statistics periodically (less frequent for remote streams)
-                    long currentTime = System.currentTimeMillis();
-                    if (currentTime - lastLogTime > LOG_INTERVAL) {
-                        double avgProcessingTime = (double) processingTimeSum / frameCount / 1_000_000.0; // Convert to
-                                                                                                          // ms
-                        Log.d(TAG, String.format(
-                                "Remote night vision processing stats - Frames: %d, Avg processing time: %.2f ms",
-                                frameCount, avgProcessingTime));
-                        lastLogTime = currentTime;
-
-                        // Reset counters for next interval
-                        frameCount = 0;
-                        processingTimeSum = 0;
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "Error processing remote frame in night vision: " + e.getMessage(), e);
-                    // Use original frame on error
-                }
+        try {
+            // Update renderer configuration only when needed
+            if (configNeedsUpdate) {
+                renderer.setNightVisionConfig(
+                        intensity,
+                        0.3f + (intensity * 0.5f), // gamma
+                        0.3f, // brightnessThreshold
+                        1.0f + (intensity * 0.8f), // contrast
+                        intensity * 0.3f // noiseReduction
+                );
+                configNeedsUpdate = false;
             }
 
-            // Forward to original sink
-            originalSink.onFrame(processedFrame);
+            // Note: Since NightVisionRenderer is now a GlDrawer, direct frame processing
+            // would require integration with WebRTC's rendering pipeline.
+            // For now, we'll pass through the frame. The night vision effect would be
+            // applied when this VideoSink is used with a renderer that supports custom
+            // GlDrawers.
+
+            originalSink.onFrame(frame);
+
+            updateStats(System.nanoTime() - startTime);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing remote frame", e);
+            // Forward original frame on error
+            originalSink.onFrame(frame);
         }
     }
 
     /**
-     * Enable or disable night vision processing for this remote stream
-     *
-     * @param enabled True to enable night vision, false to disable
+     * Enable or disable night vision for remote streams
      */
     public void setEnabled(boolean enabled) {
-        synchronized (lock) {
-            this.enabled = enabled;
-            Log.d(TAG, "Remote stream night vision " + (enabled ? "enabled" : "disabled"));
-        }
+        this.enabled = enabled;
+        configNeedsUpdate = true;
+        Log.d(TAG, String.format("Night vision for remote stream %s", enabled ? "enabled" : "disabled"));
     }
 
     /**
-     * Check if night vision is currently enabled
-     *
-     * @return True if enabled, false otherwise
-     */
-    public boolean isEnabled() {
-        synchronized (lock) {
-            return enabled;
-        }
-    }
-
-    /**
-     * Set night vision enhancement intensity for this remote stream
-     *
-     * @param intensity Enhancement intensity (0.0 - 1.0)
+     * Set night vision intensity for remote streams (0.0 - 1.0)
      */
     public void setIntensity(float intensity) {
-        synchronized (lock) {
-            this.intensity = Math.max(0f, Math.min(1f, intensity));
-            Log.d(TAG, "Remote stream night vision intensity set to: " + this.intensity);
+        float newIntensity = Math.max(0.0f, Math.min(1.0f, intensity));
+        if (Math.abs(this.intensity - newIntensity) > 0.01f) {
+            this.intensity = newIntensity;
+            configNeedsUpdate = true;
+            Log.d(TAG, String.format("Remote stream night vision intensity set to %.2f", this.intensity));
         }
     }
 
     /**
-     * Get current night vision intensity
-     *
-     * @return Current intensity value (0.0 - 1.0)
+     * Check if night vision is enabled
+     */
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    /**
+     * Get current intensity
      */
     public float getIntensity() {
-        synchronized (lock) {
-            return intensity;
-        }
+        return intensity;
     }
 
     /**
-     * Set gamma correction factor for this remote stream
-     *
-     * @param gamma Gamma correction factor (0.1 - 2.0)
+     * Get the underlying night vision renderer for use in rendering pipeline
      */
-    public void setGamma(float gamma) {
-        synchronized (lock) {
-            this.gamma = Math.max(0.1f, Math.min(2.0f, gamma));
-            Log.d(TAG, "Remote stream night vision gamma set to: " + this.gamma);
-        }
+    public NightVisionRenderer getRenderer() {
+        return renderer;
     }
 
     /**
-     * Get current gamma correction factor
-     *
-     * @return Current gamma value
-     */
-    public float getGamma() {
-        synchronized (lock) {
-            return gamma;
-        }
-    }
-
-    /**
-     * Set brightness threshold for applying enhancement
-     *
-     * @param threshold Brightness threshold (0.0 - 1.0)
-     */
-    public void setBrightnessThreshold(float threshold) {
-        synchronized (lock) {
-            this.brightnessThreshold = Math.max(0f, Math.min(1f, threshold));
-            Log.d(TAG, "Remote stream night vision brightness threshold set to: " + this.brightnessThreshold);
-        }
-    }
-
-    /**
-     * Get current brightness threshold
-     *
-     * @return Current brightness threshold
-     */
-    public float getBrightnessThreshold() {
-        synchronized (lock) {
-            return brightnessThreshold;
-        }
-    }
-
-    /**
-     * Get the original video sink that frames are forwarded to
-     *
-     * @return The original video sink
+     * Get the original sink being wrapped
      */
     public VideoSink getOriginalSink() {
         return originalSink;
     }
 
     /**
-     * Get processing statistics for this remote stream
-     *
-     * @return Statistics string for debugging
+     * Update performance statistics
      */
-    public String getStatistics() {
-        synchronized (lock) {
-            if (frameCount == 0) {
-                return "No remote frames processed yet";
-            }
-            double avgProcessingTime = (double) processingTimeSum / frameCount / 1_000_000.0;
-            return String.format("Remote stream - Frames: %d, Avg time: %.2f ms, Enabled: %s, Intensity: %.2f",
-                    frameCount, avgProcessingTime, enabled, intensity);
+    private void updateStats(long processingTimeNs) {
+        frameCount++;
+        totalProcessingTime += processingTimeNs;
+
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastStatsTime >= 5000) { // Log every 5 seconds
+            double avgFrameTime = (double) totalProcessingTime / frameCount / 1_000_000.0; // Convert to ms
+            double fps = 1000.0 / avgFrameTime;
+
+            Log.d(TAG, String.format("Remote night vision stats: %.1f FPS, %.2f ms avg frame time, %d frames processed",
+                    fps, avgFrameTime, frameCount));
+
+            frameCount = 0;
+            totalProcessingTime = 0;
+            lastStatsTime = currentTime;
         }
     }
 
     /**
-     * Clean up resources when the sink is no longer needed
+     * Get performance statistics
      */
-    public void dispose() {
-        synchronized (lock) {
-            Log.d(TAG, "NightVisionVideoSink disposed");
-            // Note: We don't dispose the processor here as it might be shared with local
-            // processing
-            // The processor should be managed by the higher-level component
+    public String getPerformanceStats() {
+        if (frameCount > 0) {
+            double avgFrameTime = (double) totalProcessingTime / frameCount / 1_000_000.0;
+            double fps = 1000.0 / avgFrameTime;
+            return String.format("RemoteNightVision: %.1f FPS, %.2f ms avg", fps, avgFrameTime);
         }
+        return "RemoteNightVision: No stats available";
+    }
+
+    /**
+     * Release resources
+     */
+    public void release() {
+        Log.d(TAG, "Releasing night vision video sink resources");
+        if (renderer != null) {
+            renderer.release();
+        }
+        enabled = false;
+        Log.d(TAG, "Night vision video sink resources released");
     }
 }

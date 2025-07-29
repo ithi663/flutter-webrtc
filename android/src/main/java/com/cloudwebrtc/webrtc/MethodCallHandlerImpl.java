@@ -42,8 +42,6 @@ import com.cloudwebrtc.webrtc.video.camera.CameraUtils;
 import com.cloudwebrtc.webrtc.video.camera.Point;
 import com.cloudwebrtc.webrtc.video.LocalVideoTrack;
 import com.cloudwebrtc.webrtc.video.NightVisionProcessor;
-import com.cloudwebrtc.webrtc.video.NightVisionRenderer;
-import com.cloudwebrtc.webrtc.video.NightVisionVideoSink;
 import com.twilio.audioswitch.AudioDevice;
 
 import org.webrtc.AudioTrack;
@@ -945,18 +943,22 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
         LocalTrack localTrack = getLocalTrack(trackId);
         if (localTrack instanceof LocalVideoTrack) {
           LocalVideoTrack localVideoTrack = (LocalVideoTrack) localTrack;
+          Log.d(TAG, String.format("Setting night vision for track %s: %s", trackId, enabled ? "enabled" : "disabled"));
 
           if (enabled) {
             // Create and add night vision processor if not exists
             if (localVideoTrack.nightVisionProcessor == null) {
               localVideoTrack.nightVisionProcessor = new NightVisionProcessor();
-              localVideoTrack.nightVisionProcessor.initialize();
               localVideoTrack.addProcessor(localVideoTrack.nightVisionProcessor);
+              Log.d(TAG, "Night vision processor created and added to track " + trackId);
             }
             localVideoTrack.nightVisionProcessor.setEnabled(true);
+            localVideoTrack.nightVisionProcessor.setIntensity(0.7f); // Set default intensity
+            Log.d(TAG, "Night vision enabled with intensity 0.7 for track " + trackId);
           } else {
             if (localVideoTrack.nightVisionProcessor != null) {
               localVideoTrack.nightVisionProcessor.setEnabled(false);
+              Log.d(TAG, "Night vision disabled for track " + trackId);
             }
           }
           result.success(null);
@@ -979,6 +981,8 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
         if (localTrack instanceof LocalVideoTrack) {
           LocalVideoTrack localVideoTrack = (LocalVideoTrack) localTrack;
           if (localVideoTrack.nightVisionProcessor != null) {
+            Log.d(TAG,
+                String.format("Setting night vision intensity for track %s: %.2f", trackId, intensity.floatValue()));
             localVideoTrack.nightVisionProcessor.setIntensity(intensity.floatValue());
             result.success(null);
           } else {
@@ -1006,29 +1010,11 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
         }
 
         if (isRemote != null && isRemote) {
-          // Handle remote stream night vision
+          // Use new drawer-based GPU path.
           if (enabled) {
-            if (renderer.nightVisionVideoSink == null) {
-              NightVisionRenderer nightVisionRenderer = new NightVisionRenderer();
-              nightVisionRenderer.initialize();
-              renderer.nightVisionVideoSink = new NightVisionVideoSink(
-                  renderer.surfaceTextureRenderer, nightVisionRenderer);
-            }
-            renderer.nightVisionVideoSink.setEnabled(true);
-            // Replace the current sink with night vision wrapper
-            if (renderer.videoTrack != null) {
-              renderer.videoTrack.removeSink(renderer.surfaceTextureRenderer);
-              renderer.videoTrack.addSink(renderer.nightVisionVideoSink);
-            }
+            renderer.enableNightVision(0.7f);
           } else {
-            if (renderer.nightVisionVideoSink != null) {
-              renderer.nightVisionVideoSink.setEnabled(false);
-              // Restore original sink
-              if (renderer.videoTrack != null) {
-                renderer.videoTrack.removeSink(renderer.nightVisionVideoSink);
-                renderer.videoTrack.addSink(renderer.surfaceTextureRenderer);
-              }
-            }
+            renderer.disableNightVision();
           }
         }
         result.success(null);
@@ -1050,8 +1036,8 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
           return;
         }
 
-        if (isRemote != null && isRemote && renderer.nightVisionVideoSink != null) {
-          renderer.nightVisionVideoSink.setIntensity(intensity.floatValue());
+        if (isRemote != null && isRemote) {
+          renderer.setNightVisionIntensity(intensity.floatValue());
         }
         result.success(null);
         break;
