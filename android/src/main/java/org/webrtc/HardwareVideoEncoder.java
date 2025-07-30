@@ -12,6 +12,8 @@ import android.view.Surface;
 import androidx.annotation.Nullable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingDeque;
 import java.util.concurrent.LinkedBlockingDeque;
@@ -70,18 +72,24 @@ class HardwareVideoEncoder implements VideoEncoder {
    private static final long ENCODER_TIMEOUT_MS = 5000; // 5 seconds
    private int consecutiveBufferTypeMismatches = 0;
    private static final int MAX_BUFFER_TYPE_MISMATCHES = 5; // Allow reset after 5 consecutive mismatches
-   
+
    // Enhanced stuck detection
    private long lastOutputBufferTimeMs = 0;
    private static final long ENCODER_STUCK_TIMEOUT_MS = 2000; // 2 seconds - more aggressive
    private int consecutiveStuckChecks = 0;
    private static final int MAX_STUCK_CHECKS = 3; // Force restart after 3 consecutive stuck detections
-   
+
    // Track when queue becomes full for immediate recovery
    private long queueFullSinceMs = 0;
    private static final long QUEUE_FULL_TIMEOUT_MS = 1000; // 1 second at full capacity triggers immediate restart
 
-   public HardwareVideoEncoder(MediaCodecWrapperFactory mediaCodecWrapperFactory, String codecName, VideoCodecMimeType codecType, Integer surfaceColorFormat, Integer yuvColorFormat, Map<String, String> params, int keyFrameIntervalSec, int forceKeyFrameIntervalMs, BitrateAdjuster bitrateAdjuster, EglBase14.Context sharedContext) {
+   // Encoded frame multiplexer for distributing frames
+   private final EncodedFrameMultiplexer encodedFrameMultiplexer = EncodedFrameMultiplexer.getInstance();
+
+   public HardwareVideoEncoder(MediaCodecWrapperFactory mediaCodecWrapperFactory, String codecName,
+         VideoCodecMimeType codecType, Integer surfaceColorFormat, Integer yuvColorFormat, Map<String, String> params,
+         int keyFrameIntervalSec, int forceKeyFrameIntervalMs, BitrateAdjuster bitrateAdjuster,
+         EglBase14.Context sharedContext) {
       this.mediaCodecWrapperFactory = mediaCodecWrapperFactory;
       this.codecName = codecName;
       this.codecType = codecType;
@@ -89,10 +97,19 @@ class HardwareVideoEncoder implements VideoEncoder {
       this.yuvColorFormat = yuvColorFormat;
       this.params = params;
       this.keyFrameIntervalSec = keyFrameIntervalSec;
-      this.forcedKeyFrameNs = TimeUnit.MILLISECONDS.toNanos((long)forceKeyFrameIntervalMs);
+      this.forcedKeyFrameNs = TimeUnit.MILLISECONDS.toNanos((long) forceKeyFrameIntervalMs);
       this.bitrateAdjuster = bitrateAdjuster;
       this.sharedContext = sharedContext;
       this.encodeThreadChecker.detachThread();
+   }
+
+   /**
+    * Get the encoded frame multiplexer for managing listeners.
+    *
+    * @return The encoded frame multiplexer
+    */
+   public EncodedFrameMultiplexer getEncodedFrameMultiplexer() {
+      return encodedFrameMultiplexer;
    }
 
    public VideoCodecStatus initEncode(VideoEncoder.Settings settings, VideoEncoder.Callback callback) {
@@ -104,11 +121,14 @@ class HardwareVideoEncoder implements VideoEncoder {
          this.height = settings.height;
          this.useSurfaceMode = this.canUseSurface();
          if (settings.startBitrate != 0 && settings.maxFramerate != 0) {
-            this.bitrateAdjuster.setTargets(settings.startBitrate * 1000, (double)settings.maxFramerate);
+            this.bitrateAdjuster.setTargets(settings.startBitrate * 1000, (double) settings.maxFramerate);
          }
 
          this.adjustedBitrate = this.bitrateAdjuster.getAdjustedBitrateBps();
-         Logging.d("HardwareVideoEncoder", "initEncode name: " + this.codecName + " type: " + this.codecType + " width: " + this.width + " height: " + this.height + " framerate_fps: " + settings.maxFramerate + " bitrate_kbps: " + settings.startBitrate + " surface mode: " + this.useSurfaceMode);
+         Logging.d("HardwareVideoEncoder",
+               "initEncode name: " + this.codecName + " type: " + this.codecType + " width: " + this.width + " height: "
+                     + this.height + " framerate_fps: " + settings.maxFramerate + " bitrate_kbps: "
+                     + settings.startBitrate + " surface mode: " + this.useSurfaceMode);
          return this.initEncodeInternal();
       } else {
          Logging.e("HardwareVideoEncoder", "MediaCodec requires 2x2 alignment.");
@@ -140,35 +160,35 @@ class HardwareVideoEncoder implements VideoEncoder {
          format.setInteger("bitrate", this.adjustedBitrate);
          format.setInteger("bitrate-mode", 2);
          format.setInteger("color-format", colorFormat);
-         format.setFloat("frame-rate", (float)this.bitrateAdjuster.getAdjustedFramerateFps());
+         format.setFloat("frame-rate", (float) this.bitrateAdjuster.getAdjustedFramerateFps());
          format.setInteger("i-frame-interval", this.keyFrameIntervalSec);
          if (this.codecType == VideoCodecMimeType.H264) {
-            String profileLevelId = (String)this.params.get("profile-level-id");
+            String profileLevelId = (String) this.params.get("profile-level-id");
             if (profileLevelId == null) {
                profileLevelId = "42e01f";
             }
 
             byte var5 = -1;
-            switch(profileLevelId.hashCode()) {
-            case 1537948542:
-               if (profileLevelId.equals("42e01f")) {
-                  var5 = 1;
-               }
-               break;
-            case 1595523974:
-               if (profileLevelId.equals("640c1f")) {
-                  var5 = 0;
-               }
+            switch (profileLevelId.hashCode()) {
+               case 1537948542:
+                  if (profileLevelId.equals("42e01f")) {
+                     var5 = 1;
+                  }
+                  break;
+               case 1595523974:
+                  if (profileLevelId.equals("640c1f")) {
+                     var5 = 0;
+                  }
             }
 
-            switch(var5) {
-            case 0:
-               format.setInteger("profile", 8);
-               format.setInteger("level", 256);
-            case 1:
-               break;
-            default:
-               Logging.w("HardwareVideoEncoder", "Unknown profile level id: " + profileLevelId);
+            switch (var5) {
+               case 0:
+                  format.setInteger("profile", 8);
+                  format.setInteger("level", 256);
+               case 1:
+                  break;
+               default:
+                  Logging.w("HardwareVideoEncoder", "Unknown profile level id: " + profileLevelId);
             }
          }
 
@@ -182,7 +202,7 @@ class HardwareVideoEncoder implements VideoEncoder {
          }
 
          Logging.d("HardwareVideoEncoder", "Format: " + format);
-         this.codec.configure(format, (Surface)null, (MediaCrypto)null, 1);
+         this.codec.configure(format, (Surface) null, (MediaCrypto) null, 1);
          if (this.useSurfaceMode) {
             this.textureEglBase = EglBase.createEgl14(this.sharedContext, EglBase.CONFIG_RECORDABLE);
             this.textureInputSurface = this.codec.createInputSurface();
@@ -255,28 +275,31 @@ class HardwareVideoEncoder implements VideoEncoder {
          int frameWidth = videoFrame.getBuffer().getWidth();
          int frameHeight = videoFrame.getBuffer().getHeight();
          boolean shouldUseSurfaceMode = this.canUseSurface() && isTextureBuffer;
-         
+
          // Only reset codec for significant changes, avoid surface mode switching
          boolean needsReset = false;
          if (frameWidth != this.width || frameHeight != this.height) {
             needsReset = true;
-            Logging.w("HardwareVideoEncoder", "Resolution changed from " + this.width + "x" + this.height + " to " + frameWidth + "x" + frameHeight);
+            Logging.w("HardwareVideoEncoder", "Resolution changed from " + this.width + "x" + this.height + " to "
+                  + frameWidth + "x" + frameHeight);
             this.consecutiveBufferTypeMismatches = 0; // Reset mismatch counter on resolution change
          } else if (shouldUseSurfaceMode != this.useSurfaceMode) {
             this.consecutiveBufferTypeMismatches++;
             if (this.consecutiveBufferTypeMismatches >= MAX_BUFFER_TYPE_MISMATCHES) {
                // Allow reset after consistent mismatches to adapt to actual buffer type
                needsReset = true;
-               Logging.w("HardwareVideoEncoder", "Surface mode adaptation: " + this.useSurfaceMode + " -> " + shouldUseSurfaceMode + " after " + this.consecutiveBufferTypeMismatches + " mismatches");
+               Logging.w("HardwareVideoEncoder", "Surface mode adaptation: " + this.useSurfaceMode + " -> "
+                     + shouldUseSurfaceMode + " after " + this.consecutiveBufferTypeMismatches + " mismatches");
                this.consecutiveBufferTypeMismatches = 0;
             } else {
-               Logging.d("HardwareVideoEncoder", "Surface mode change detected: " + this.useSurfaceMode + " -> " + shouldUseSurfaceMode + ", mismatch count: " + this.consecutiveBufferTypeMismatches);
+               Logging.d("HardwareVideoEncoder", "Surface mode change detected: " + this.useSurfaceMode + " -> "
+                     + shouldUseSurfaceMode + ", mismatch count: " + this.consecutiveBufferTypeMismatches);
             }
          } else {
             // Reset mismatch counter when buffer types align
             this.consecutiveBufferTypeMismatches = 0;
          }
-         
+
          if (needsReset) {
             VideoCodecStatus status = this.resetCodec(frameWidth, frameHeight, shouldUseSurfaceMode);
             if (status != VideoCodecStatus.OK) {
@@ -287,10 +310,10 @@ class HardwareVideoEncoder implements VideoEncoder {
          // Enhanced stuck detection with more aggressive recovery
          long currentTime = System.currentTimeMillis();
          boolean isEncoderStuck = false;
-         
-                  // Thread-safe queue size checking with hard limit enforcement
+
+         // Thread-safe queue size checking with hard limit enforcement
          int currentQueueSize = this.outputBuilders.size();
-         
+
          // Absolute hard limit - never allow queue to grow beyond this
          if (currentQueueSize >= MAX_ENCODER_Q_SIZE) {
             // Track how long queue has been full
@@ -298,46 +321,50 @@ class HardwareVideoEncoder implements VideoEncoder {
                this.queueFullSinceMs = currentTime;
                Logging.w("HardwareVideoEncoder", "Encoder queue reached hard limit, starting timeout tracking");
             }
-            
-            Logging.e("HardwareVideoEncoder", "Dropped frame, encoder queue at hard limit (size: " + currentQueueSize + ")");
+
+            Logging.e("HardwareVideoEncoder",
+                  "Dropped frame, encoder queue at hard limit (size: " + currentQueueSize + ")");
             return VideoCodecStatus.NO_OUTPUT;
          } else {
             // Reset queue full tracking when queue has space
             this.queueFullSinceMs = 0;
          }
-         
-         // Early prevention: if queue is approaching full and encoder isn't producing output
-         if (currentQueueSize >= (MAX_ENCODER_Q_SIZE - 1) && 
-             (currentTime - this.lastOutputBufferTimeMs > ENCODER_STUCK_TIMEOUT_MS / 2)) {
-            Logging.w("HardwareVideoEncoder", "Encoder becoming unresponsive, dropping frame preventively. Queue: " + 
-                     currentQueueSize + ", last output: " + (currentTime - this.lastOutputBufferTimeMs) + "ms ago");
+
+         // Early prevention: if queue is approaching full and encoder isn't producing
+         // output
+         if (currentQueueSize >= (MAX_ENCODER_Q_SIZE - 1) &&
+               (currentTime - this.lastOutputBufferTimeMs > ENCODER_STUCK_TIMEOUT_MS / 2)) {
+            Logging.w("HardwareVideoEncoder", "Encoder becoming unresponsive, dropping frame preventively. Queue: " +
+                  currentQueueSize + ", last output: " + (currentTime - this.lastOutputBufferTimeMs) + "ms ago");
             return VideoCodecStatus.NO_OUTPUT;
          }
-         
+
          // More aggressive stuck detection - trigger when queue is near full
          if (currentQueueSize >= (MAX_ENCODER_Q_SIZE - 2)) {
             // Check for multiple types of stuck conditions with more lenient timeouts
             boolean queueStuck = (currentTime - this.lastSuccessfulEncodeTimeMs > ENCODER_STUCK_TIMEOUT_MS);
             boolean outputStuck = (currentTime - this.lastOutputBufferTimeMs > ENCODER_STUCK_TIMEOUT_MS);
-            
+
             // Also check if queue is completely full for immediate action
             boolean queueFull = (currentQueueSize >= MAX_ENCODER_Q_SIZE);
-            boolean queueFullTooLong = (this.queueFullSinceMs > 0 && currentTime - this.queueFullSinceMs > QUEUE_FULL_TIMEOUT_MS);
-            
+            boolean queueFullTooLong = (this.queueFullSinceMs > 0
+                  && currentTime - this.queueFullSinceMs > QUEUE_FULL_TIMEOUT_MS);
+
             if (queueStuck || outputStuck || queueFull || queueFullTooLong) {
                this.consecutiveStuckChecks++;
                isEncoderStuck = true;
-               
-               Logging.w("HardwareVideoEncoder", "Encoder stuck detection #" + this.consecutiveStuckChecks + 
-                        " - Queue: " + currentQueueSize + "/" + MAX_ENCODER_Q_SIZE +
-                        ", Queue stuck: " + queueStuck + " (" + (currentTime - this.lastSuccessfulEncodeTimeMs) + "ms)" +
-                        ", Output stuck: " + outputStuck + " (" + (currentTime - this.lastOutputBufferTimeMs) + "ms)" +
-                        ", Queue full: " + queueFull + ", Queue full too long: " + queueFullTooLong + 
-                        (this.queueFullSinceMs > 0 ? " (" + (currentTime - this.queueFullSinceMs) + "ms)" : ""));
-               
+
+               Logging.w("HardwareVideoEncoder", "Encoder stuck detection #" + this.consecutiveStuckChecks +
+                     " - Queue: " + currentQueueSize + "/" + MAX_ENCODER_Q_SIZE +
+                     ", Queue stuck: " + queueStuck + " (" + (currentTime - this.lastSuccessfulEncodeTimeMs) + "ms)" +
+                     ", Output stuck: " + outputStuck + " (" + (currentTime - this.lastOutputBufferTimeMs) + "ms)" +
+                     ", Queue full: " + queueFull + ", Queue full too long: " + queueFullTooLong +
+                     (this.queueFullSinceMs > 0 ? " (" + (currentTime - this.queueFullSinceMs) + "ms)" : ""));
+
                if (this.consecutiveStuckChecks >= MAX_STUCK_CHECKS || queueFull || queueFullTooLong) {
-                  Logging.e("HardwareVideoEncoder", "Encoder permanently stuck after " + this.consecutiveStuckChecks + " checks (or queue issues), forcing restart");
-                  
+                  Logging.e("HardwareVideoEncoder", "Encoder permanently stuck after " + this.consecutiveStuckChecks
+                        + " checks (or queue issues), forcing restart");
+
                   // Force a complete codec restart to recover
                   try {
                      VideoCodecStatus resetStatus = this.resetCodec(this.width, this.height, this.useSurfaceMode);
@@ -356,53 +383,62 @@ class HardwareVideoEncoder implements VideoEncoder {
                      Logging.e("HardwareVideoEncoder", "Exception during forced encoder restart", e);
                      return VideoCodecStatus.ERROR;
                   }
-                } else {
-                   // Progressive recovery attempts
-                   this.outputBuilders.clear();
-                   this.lastSuccessfulEncodeTimeMs = currentTime;
-                   this.queueFullSinceMs = 0;
-                   
-                   if (this.consecutiveStuckChecks == 1) {
-                      // First attempt: Try to kickstart with keyframe
-                      try {
-                         Bundle b = new Bundle();
-                         b.putInt("request-sync", 0);
-                         this.codec.setParameters(b);
-                         Logging.w("HardwareVideoEncoder", "Requested keyframe for stuck recovery #" + this.consecutiveStuckChecks);
-                      } catch (Exception e) {
-                         Logging.e("HardwareVideoEncoder", "Failed to request keyframe for recovery", e);
-                      }
-                   } else if (this.consecutiveStuckChecks == 2) {
-                      // Second attempt: Try flushing the codec
-                      try {
-                         Logging.w("HardwareVideoEncoder", "Attempting codec flush for stuck recovery");
-                         this.codec.flush();
-                         this.lastOutputBufferTimeMs = currentTime; // Reset output timer after flush
-                      } catch (Exception e) {
-                         Logging.e("HardwareVideoEncoder", "Failed to flush codec for recovery", e);
-                      }
-                   }
-                   
-                   return VideoCodecStatus.NO_OUTPUT;
-                }
+               } else {
+                  // Progressive recovery attempts
+                  this.outputBuilders.clear();
+                  this.lastSuccessfulEncodeTimeMs = currentTime;
+                  this.queueFullSinceMs = 0;
+
+                  if (this.consecutiveStuckChecks == 1) {
+                     // First attempt: Try to kickstart with keyframe
+                     try {
+                        Bundle b = new Bundle();
+                        b.putInt("request-sync", 0);
+                        this.codec.setParameters(b);
+                        Logging.w("HardwareVideoEncoder",
+                              "Requested keyframe for stuck recovery #" + this.consecutiveStuckChecks);
+                     } catch (Exception e) {
+                        Logging.e("HardwareVideoEncoder", "Failed to request keyframe for recovery", e);
+                     }
+                  } else if (this.consecutiveStuckChecks == 2) {
+                     // Second attempt: Try flushing the codec
+                     try {
+                        Logging.w("HardwareVideoEncoder", "Attempting codec flush for stuck recovery");
+                        this.codec.flush();
+                        this.lastOutputBufferTimeMs = currentTime; // Reset output timer after flush
+                     } catch (Exception e) {
+                        Logging.e("HardwareVideoEncoder", "Failed to flush codec for recovery", e);
+                     }
+                  }
+
+                  return VideoCodecStatus.NO_OUTPUT;
+               }
             }
          } else {
             // Reset stuck detection when queue is healthy
             if (this.consecutiveStuckChecks > 0) {
-               Logging.d("HardwareVideoEncoder", "Encoder recovered, resetting stuck detection (was at " + this.consecutiveStuckChecks + " checks)");
+               Logging.d("HardwareVideoEncoder", "Encoder recovered, resetting stuck detection (was at "
+                     + this.consecutiveStuckChecks + " checks)");
                this.consecutiveStuckChecks = 0;
             }
          }
 
-         // Check for buffer type mismatches early - don't queue builders for frames we'll drop
+         // Check for buffer type mismatches early - don't queue builders for frames
+         // we'll drop
          if (this.useSurfaceMode && !isTextureBuffer) {
             this.consecutiveBufferTypeMismatches++;
-            Logging.d("HardwareVideoEncoder", "Buffer type mismatch (useSurfaceMode: " + this.useSurfaceMode + ", isTextureBuffer: " + isTextureBuffer + "), dropping frame. Mismatch count: " + this.consecutiveBufferTypeMismatches);
+            Logging.d("HardwareVideoEncoder",
+                  "Buffer type mismatch (useSurfaceMode: " + this.useSurfaceMode + ", isTextureBuffer: "
+                        + isTextureBuffer + "), dropping frame. Mismatch count: "
+                        + this.consecutiveBufferTypeMismatches);
             return VideoCodecStatus.NO_OUTPUT;
          }
          if (!this.useSurfaceMode && isTextureBuffer) {
             this.consecutiveBufferTypeMismatches++;
-            Logging.d("HardwareVideoEncoder", "Buffer type mismatch (useSurfaceMode: " + this.useSurfaceMode + ", isTextureBuffer: " + isTextureBuffer + "), dropping frame. Mismatch count: " + this.consecutiveBufferTypeMismatches);
+            Logging.d("HardwareVideoEncoder",
+                  "Buffer type mismatch (useSurfaceMode: " + this.useSurfaceMode + ", isTextureBuffer: "
+                        + isTextureBuffer + "), dropping frame. Mismatch count: "
+                        + this.consecutiveBufferTypeMismatches);
             return VideoCodecStatus.NO_OUTPUT;
          }
 
@@ -413,7 +449,7 @@ class HardwareVideoEncoder implements VideoEncoder {
          EncodedImage.FrameType[] var8 = encodeInfo.frameTypes;
          int var9 = var8.length;
 
-         for(int var10 = 0; var10 < var9; ++var10) {
+         for (int var10 = 0; var10 < var9; ++var10) {
             EncodedImage.FrameType frameType = var8[var10];
             if (frameType == EncodedImage.FrameType.VideoFrameKey) {
                requestedKeyFrame = true;
@@ -425,13 +461,16 @@ class HardwareVideoEncoder implements VideoEncoder {
          }
 
          // Prepare builder but don't add to queue yet
-         EncodedImage.Builder builder = EncodedImage.builder().setCaptureTimeNs(videoFrame.getTimestampNs()).setEncodedWidth(videoFrame.getBuffer().getWidth()).setEncodedHeight(videoFrame.getBuffer().getHeight()).setRotation(videoFrame.getRotation());
-         
+         EncodedImage.Builder builder = EncodedImage.builder().setCaptureTimeNs(videoFrame.getTimestampNs())
+               .setEncodedWidth(videoFrame.getBuffer().getWidth()).setEncodedHeight(videoFrame.getBuffer().getHeight())
+               .setRotation(videoFrame.getRotation());
+
          long presentationTimestampUs = this.nextPresentationTimestampUs;
-         long frameDurationUs = (long)((double)TimeUnit.SECONDS.toMicros(1L) / this.bitrateAdjuster.getAdjustedFramerateFps());
+         long frameDurationUs = (long) ((double) TimeUnit.SECONDS.toMicros(1L)
+               / this.bitrateAdjuster.getAdjustedFramerateFps());
          this.nextPresentationTimestampUs += frameDurationUs;
          VideoCodecStatus returnValue;
-         
+
          // Handle mixed buffer types gracefully
          if (this.useSurfaceMode && isTextureBuffer) {
             returnValue = this.encodeTextureBuffer(videoFrame, presentationTimestampUs);
@@ -449,12 +488,15 @@ class HardwareVideoEncoder implements VideoEncoder {
             if (this.outputBuilders.size() < MAX_ENCODER_Q_SIZE) {
                this.outputBuilders.offer(builder);
                this.lastSuccessfulEncodeTimeMs = System.currentTimeMillis();
-               Logging.v("HardwareVideoEncoder", "Frame encoded successfully, queue size: " + this.outputBuilders.size());
+               Logging.v("HardwareVideoEncoder",
+                     "Frame encoded successfully, queue size: " + this.outputBuilders.size());
             } else {
-               Logging.e("HardwareVideoEncoder", "Queue full at final check, dropping encoded frame. Queue size: " + this.outputBuilders.size());
+               Logging.e("HardwareVideoEncoder",
+                     "Queue full at final check, dropping encoded frame. Queue size: " + this.outputBuilders.size());
             }
          } else {
-            Logging.w("HardwareVideoEncoder", "Encode failed with status: " + returnValue + ", queue size: " + this.outputBuilders.size());
+            Logging.w("HardwareVideoEncoder",
+                  "Encode failed with status: " + returnValue + ", queue size: " + this.outputBuilders.size());
          }
 
          return returnValue;
@@ -467,7 +509,7 @@ class HardwareVideoEncoder implements VideoEncoder {
       try {
          GLES20.glClear(16384);
          VideoFrame derotatedFrame = new VideoFrame(videoFrame.getBuffer(), 0, videoFrame.getTimestampNs());
-         this.videoFrameDrawer.drawFrame(derotatedFrame, this.textureDrawer, (Matrix)null);
+         this.videoFrameDrawer.drawFrame(derotatedFrame, this.textureDrawer, (Matrix) null);
          this.textureEglBase.swapBuffers(TimeUnit.MICROSECONDS.toNanos(presentationTimestampUs));
       } catch (RuntimeException var5) {
          Logging.e("HardwareVideoEncoder", "encodeTexture failed", var5);
@@ -502,7 +544,8 @@ class HardwareVideoEncoder implements VideoEncoder {
 
          if (buffer.capacity() < this.frameSizeBytes) {
             int var10001 = buffer.capacity();
-            Logging.e("HardwareVideoEncoder", "Input buffer size: " + var10001 + " is smaller than frame size: " + this.frameSizeBytes);
+            Logging.e("HardwareVideoEncoder",
+                  "Input buffer size: " + var10001 + " is smaller than frame size: " + this.frameSizeBytes);
             return VideoCodecStatus.ERROR;
          } else {
             this.fillInputBuffer(buffer, videoFrame.getBuffer());
@@ -525,7 +568,7 @@ class HardwareVideoEncoder implements VideoEncoder {
          framerate = 30;
       }
 
-      this.bitrateAdjuster.setTargets(bitrateAllocation.getSum(), (double)framerate);
+      this.bitrateAdjuster.setTargets(bitrateAllocation.getSum(), (double) framerate);
       return VideoCodecStatus.OK;
    }
 
@@ -602,7 +645,7 @@ class HardwareVideoEncoder implements VideoEncoder {
    private Thread createOutputThread() {
       return new Thread() {
          public void run() {
-            while(HardwareVideoEncoder.this.running) {
+            while (HardwareVideoEncoder.this.running) {
                HardwareVideoEncoder.this.deliverEncodedImage();
             }
 
@@ -623,16 +666,20 @@ class HardwareVideoEncoder implements VideoEncoder {
                Logging.d("HardwareVideoEncoder", "Output format changed, waiting for buffers to be released");
                // this.outputBuffersBusyCount.waitForZero(); // Removed to prevent hanging
             } else if (index == -1) {
-               Logging.v("HardwareVideoEncoder", "No output buffer available, queue size: " + this.outputBuilders.size());
+               Logging.v("HardwareVideoEncoder",
+                     "No output buffer available, queue size: " + this.outputBuilders.size());
             } else {
-               Logging.d("HardwareVideoEncoder", "dequeueOutputBuffer returned: " + index + ", queue size: " + this.outputBuilders.size());
+               Logging.d("HardwareVideoEncoder",
+                     "dequeueOutputBuffer returned: " + index + ", queue size: " + this.outputBuilders.size());
             }
 
-            // Check if we have a backlog of builders but no output - this indicates encoder issues
+            // Check if we have a backlog of builders but no output - this indicates encoder
+            // issues
             if (this.outputBuilders.size() >= MAX_ENCODER_Q_SIZE) {
                long currentTime = System.currentTimeMillis();
                if (currentTime - this.lastOutputBufferTimeMs > ENCODER_STUCK_TIMEOUT_MS) {
-                  Logging.w("HardwareVideoEncoder", "Encoder not producing output with " + this.outputBuilders.size() + " builders queued for " + (currentTime - this.lastOutputBufferTimeMs) + "ms");
+                  Logging.w("HardwareVideoEncoder", "Encoder not producing output with " + this.outputBuilders.size()
+                        + " builders queued for " + (currentTime - this.lastOutputBufferTimeMs) + "ms");
                }
             }
 
@@ -644,7 +691,8 @@ class HardwareVideoEncoder implements VideoEncoder {
 
          // Check if we have builders available
          if (this.outputBuilders.isEmpty()) {
-            Logging.w("HardwareVideoEncoder", "MediaCodec produced output but no builders available, dropping frame. Index: " + index);
+            Logging.w("HardwareVideoEncoder",
+                  "MediaCodec produced output but no builders available, dropping frame. Index: " + index);
             this.codec.releaseOutputBuffer(index, false);
             return;
          }
@@ -652,9 +700,21 @@ class HardwareVideoEncoder implements VideoEncoder {
          ByteBuffer outputBuffer = this.codec.getOutputBuffer(index);
          outputBuffer.position(info.offset);
          outputBuffer.limit(info.offset + info.size);
+
+         // Forward encoded data to multiplexer before processing for WebRTC
+         try {
+            // Create a sliced buffer for the multiplexer
+            ByteBuffer slicedBuffer = outputBuffer.slice();
+            encodedFrameMultiplexer.distributeEncodedFrame(slicedBuffer, info);
+         } catch (Exception e) {
+            Logging.e(TAG, "Error notifying encoded frame multiplexer", e);
+         }
+
          if ((info.flags & 2) != 0) {
-            Logging.d("HardwareVideoEncoder", "Config frame generated. Offset: " + info.offset + ". Size: " + info.size);
-            if (info.size > 0 && (this.codecType == VideoCodecMimeType.H264 || this.codecType == VideoCodecMimeType.H265)) {
+            Logging.d("HardwareVideoEncoder",
+                  "Config frame generated. Offset: " + info.offset + ". Size: " + info.size);
+            if (info.size > 0
+                  && (this.codecType == VideoCodecMimeType.H264 || this.codecType == VideoCodecMimeType.H265)) {
                this.configBuffer = ByteBuffer.allocateDirect(info.size);
                this.configBuffer.put(outputBuffer);
             }
@@ -686,7 +746,8 @@ class HardwareVideoEncoder implements VideoEncoder {
          ByteBuffer frameBuffer;
          if (isKeyFrame && this.configBuffer != null) {
             int var10001 = this.configBuffer.capacity();
-            Logging.d("HardwareVideoEncoder", "Prepending config buffer of size " + var10001 + " to output buffer with offset " + info.offset + ", size " + info.size);
+            Logging.d("HardwareVideoEncoder", "Prepending config buffer of size " + var10001
+                  + " to output buffer with offset " + info.offset + ", size " + info.size);
             frameBuffer = ByteBuffer.allocateDirect(info.size + this.configBuffer.capacity());
             this.configBuffer.rewind();
             frameBuffer.put(this.configBuffer);
@@ -708,8 +769,9 @@ class HardwareVideoEncoder implements VideoEncoder {
             };
          }
 
-         EncodedImage.FrameType frameType = isKeyFrame ? EncodedImage.FrameType.VideoFrameKey : EncodedImage.FrameType.VideoFrameDelta;
-         EncodedImage.Builder builder = (EncodedImage.Builder)this.outputBuilders.poll();
+         EncodedImage.FrameType frameType = isKeyFrame ? EncodedImage.FrameType.VideoFrameKey
+               : EncodedImage.FrameType.VideoFrameDelta;
+         EncodedImage.Builder builder = (EncodedImage.Builder) this.outputBuilders.poll();
          builder.setBuffer(frameBuffer, releaseCallback);
          builder.setFrameType(frameType);
          builder.setQp(qp);
@@ -789,7 +851,9 @@ class HardwareVideoEncoder implements VideoEncoder {
          this.frameSizeBytes = this.sliceHeight * this.stride + chromaSliceHeight * chromaHeight * 2;
       }
 
-      Logging.d("HardwareVideoEncoder", "updateInputFormat format: " + format + " stride: " + this.stride + " sliceHeight: " + this.sliceHeight + " isSemiPlanar: " + this.isSemiPlanar + " frameSizeBytes: " + this.frameSizeBytes);
+      Logging.d("HardwareVideoEncoder",
+            "updateInputFormat format: " + format + " stride: " + this.stride + " sliceHeight: " + this.sliceHeight
+                  + " isSemiPlanar: " + this.isSemiPlanar + " frameSizeBytes: " + this.frameSizeBytes);
    }
 
    protected boolean isEncodingStatisticsSupported() {
@@ -809,24 +873,26 @@ class HardwareVideoEncoder implements VideoEncoder {
    protected void fillInputBuffer(ByteBuffer buffer, VideoFrame.Buffer frame) {
       VideoFrame.I420Buffer i420 = frame.toI420();
       if (this.isSemiPlanar) {
-         YuvHelper.I420ToNV12(i420.getDataY(), i420.getStrideY(), i420.getDataU(), i420.getStrideU(), i420.getDataV(), i420.getStrideV(), buffer, i420.getWidth(), i420.getHeight(), this.stride, this.sliceHeight);
+         YuvHelper.I420ToNV12(i420.getDataY(), i420.getStrideY(), i420.getDataU(), i420.getStrideU(), i420.getDataV(),
+               i420.getStrideV(), buffer, i420.getWidth(), i420.getHeight(), this.stride, this.sliceHeight);
       } else {
-         YuvHelper.I420Copy(i420.getDataY(), i420.getStrideY(), i420.getDataU(), i420.getStrideU(), i420.getDataV(), i420.getStrideV(), buffer, i420.getWidth(), i420.getHeight(), this.stride, this.sliceHeight);
+         YuvHelper.I420Copy(i420.getDataY(), i420.getStrideY(), i420.getDataU(), i420.getStrideU(), i420.getDataV(),
+               i420.getStrideV(), buffer, i420.getWidth(), i420.getHeight(), this.stride, this.sliceHeight);
       }
 
       i420.release();
    }
 
    protected boolean isSemiPlanar(int colorFormat) {
-      switch(colorFormat) {
-      case 19:
-         return false;
-      case 21:
-      case 2141391872:
-      case 2141391876:
-         return true;
-      default:
-         throw new IllegalArgumentException("Unsupported colorFormat: " + colorFormat);
+      switch (colorFormat) {
+         case 19:
+            return false;
+         case 21:
+         case 2141391872:
+         case 2141391876:
+            return true;
+         default:
+            throw new IllegalArgumentException("Unsupported colorFormat: " + colorFormat);
       }
    }
 
@@ -835,13 +901,13 @@ class HardwareVideoEncoder implements VideoEncoder {
       private int count;
 
       public void increment() {
-         synchronized(this.countLock) {
+         synchronized (this.countLock) {
             ++this.count;
          }
       }
 
       public void decrement() {
-         synchronized(this.countLock) {
+         synchronized (this.countLock) {
             --this.count;
             if (this.count == 0) {
                this.countLock.notifyAll();
@@ -852,8 +918,8 @@ class HardwareVideoEncoder implements VideoEncoder {
 
       public void waitForZero() {
          boolean wasInterrupted = false;
-         synchronized(this.countLock) {
-            while(this.count > 0) {
+         synchronized (this.countLock) {
+            while (this.count > 0) {
                try {
                   this.countLock.wait();
                } catch (InterruptedException var5) {

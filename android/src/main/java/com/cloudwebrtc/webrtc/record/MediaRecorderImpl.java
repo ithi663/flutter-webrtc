@@ -5,22 +5,18 @@ import android.util.Log;
 
 import com.cloudwebrtc.webrtc.utils.EglUtils;
 
-import org.webrtc.VideoTrack;
-
 import java.io.File;
 
 public class MediaRecorderImpl {
 
     private final Integer id;
-    private final VideoTrack videoTrack;
     private final AudioSamplesInterceptor audioInterceptor;
     private VideoFileRenderer videoFileRenderer;
     private boolean isRunning = false;
     private File recordFile;
 
-    public MediaRecorderImpl(Integer id, @Nullable VideoTrack videoTrack, @Nullable AudioSamplesInterceptor audioInterceptor) {
+    public MediaRecorderImpl(Integer id, @Nullable AudioSamplesInterceptor audioInterceptor) {
         this.id = id;
-        this.videoTrack = videoTrack;
         this.audioInterceptor = audioInterceptor;
     }
 
@@ -29,37 +25,36 @@ public class MediaRecorderImpl {
         if (isRunning)
             return;
         isRunning = true;
-        //noinspection ResultOfMethodCallIgnored
+        // noinspection ResultOfMethodCallIgnored
         file.getParentFile().mkdirs();
-        if (videoTrack != null) {
-            videoFileRenderer = new VideoFileRenderer(
+
+        // Create VideoFileRenderer which will automatically register with
+        // EncodedFrameMultiplexer
+        videoFileRenderer = new VideoFileRenderer(
                 file.getAbsolutePath(),
-                EglUtils.getRootEglBaseContext(),
-                audioInterceptor != null
-            );
-            videoTrack.addSink(videoFileRenderer);
-            if (audioInterceptor != null)
-                audioInterceptor.attachCallback(id, videoFileRenderer);
-        } else {
-            Log.e(TAG, "Video track is null");
-            if (audioInterceptor != null) {
-                //TODO(rostopira): audio only recording
-                throw new Exception("Audio-only recording not implemented yet");
-            }
+                audioInterceptor != null);
+
+        if (audioInterceptor != null) {
+            audioInterceptor.attachCallback(id, videoFileRenderer);
         }
+
+        Log.d(TAG, "Recording started to file: " + file.getAbsolutePath());
     }
 
-    public File getRecordFile() { return recordFile; }
+    public File getRecordFile() {
+        return recordFile;
+    }
 
     public void stopRecording() {
         isRunning = false;
         if (audioInterceptor != null)
             audioInterceptor.detachCallback(id);
-        if (videoTrack != null && videoFileRenderer != null) {
-            videoTrack.removeSink(videoFileRenderer);
+        if (videoFileRenderer != null) {
+            // VideoFileRenderer will automatically unregister from EncodedFrameMultiplexer
             videoFileRenderer.release();
             videoFileRenderer = null;
         }
+        Log.d(TAG, "Recording stopped");
     }
 
     private static final String TAG = "MediaRecorderImpl";

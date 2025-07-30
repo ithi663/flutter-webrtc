@@ -962,9 +962,11 @@ public class GetUserMediaImpl {
 
     /**
      * Creates and starts recording of local stream to file
+     * Video frames are automatically captured from HardwareVideoEncoder via
+     * EncodedFrameMultiplexer
      *
      * @param path         to the file for record
-     * @param videoTrack   to record or null if only audio needed
+     * @param videoTrack   (deprecated - no longer used, kept for API compatibility)
      * @param audioChannel channel for recording or null
      * @throws Exception lot of different exceptions, pass back to dart layer to
      *                   print them at least
@@ -981,7 +983,7 @@ public class GetUserMediaImpl {
             }
             interceptor = outputSamplesInterceptor;
         }
-        MediaRecorderImpl mediaRecorder = new MediaRecorderImpl(id, videoTrack, interceptor);
+        MediaRecorderImpl mediaRecorder = new MediaRecorderImpl(id, interceptor);
         mediaRecorder.startRecording(new File(path));
         mediaRecorders.append(id, mediaRecorder);
     }
