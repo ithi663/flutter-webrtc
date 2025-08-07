@@ -342,6 +342,11 @@ class WebRtcAudioRecord {
       }
    }
 
+   public void release() {
+      Logging.d(TAG, "release");
+      executor.shutdown();
+   }
+
    private void releaseAudioResources() {
       Logging.d("WebRtcAudioRecordExternal", "releaseAudioResources");
       if (this.audioRecord != null) {

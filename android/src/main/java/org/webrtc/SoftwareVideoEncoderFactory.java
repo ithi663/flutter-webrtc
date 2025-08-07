@@ -29,6 +29,12 @@ public class SoftwareVideoEncoderFactory implements VideoEncoderFactory {
       return (VideoCodecInfo[])nativeGetSupportedCodecs(this.nativeFactory).toArray(new VideoCodecInfo[0]);
    }
 
+   public void release() {
+      if (nativeFactory != 0) {
+         nativeReleaseFactory(nativeFactory);
+      }
+   }
+
    private static native long nativeCreateFactory();
 
    private static native boolean nativeIsSupported(long var0, VideoCodecInfo var2);
@@ -36,4 +42,6 @@ public class SoftwareVideoEncoderFactory implements VideoEncoderFactory {
    private static native long nativeCreate(long var0, long var2, VideoCodecInfo var4);
 
    private static native List<VideoCodecInfo> nativeGetSupportedCodecs(long var0);
+
+   private static native void nativeReleaseFactory(long nativeFactory);
 }

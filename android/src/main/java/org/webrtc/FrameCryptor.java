@@ -50,13 +50,16 @@ public class FrameCryptor {
 
    public void setObserver(@Nullable FrameCryptor.Observer observer) {
       this.checkFrameCryptorExists();
-      nativeSetObserver(this.nativeFrameCryptor, observer);
+      // First, release the old observer peer if it exists.
       if (this.observerPtr != 0L) {
+         nativeUnSetObserver(this.nativeFrameCryptor);
          JniCommon.nativeReleaseRef(this.observerPtr);
          this.observerPtr = 0L;
       }
-
-      long newPtr = this.observerPtr;
+      // Then, set the new one and store its native peer handle.
+      if (observer != null) {
+         this.observerPtr = nativeSetObserver(this.nativeFrameCryptor, observer);
+      }
    }
 
    private void checkFrameCryptorExists() {

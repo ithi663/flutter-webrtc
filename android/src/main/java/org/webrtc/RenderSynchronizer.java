@@ -58,6 +58,19 @@ public final class RenderSynchronizer {
       this.listeners.remove(listener);
    }
 
+   public void release() {
+      synchronized(lock) {
+         if (this.isListening) {
+            this.isListening = false;
+            this.mainThreadHandler.post(() -> {
+               choreographer.removeFrameCallback(this::onDisplayRefreshCycleBegin);
+            });
+         }
+         listeners.clear();
+      }
+      Logging.d(TAG, "Released");
+   }
+
    private void onDisplayRefreshCycleBegin(long refreshTimeNanos) {
       synchronized(this.lock) {
          if (this.listeners.isEmpty()) {

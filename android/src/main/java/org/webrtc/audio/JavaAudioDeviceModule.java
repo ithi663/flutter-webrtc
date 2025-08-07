@@ -62,8 +62,9 @@ public class JavaAudioDeviceModule implements AudioDeviceModule {
             JniCommon.nativeReleaseRef(this.nativeAudioDeviceModule);
             this.nativeAudioDeviceModule = 0L;
          }
-
       }
+      // Release owned Java resources
+      audioInput.release();
    }
 
    public void setSpeakerMute(boolean mute) {
