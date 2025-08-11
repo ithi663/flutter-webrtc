@@ -1,19 +1,13 @@
 # Night Vision: Enable/Disable Guide
-# Night Vision: Implementation Guide
+
 
 This guide explains how to toggle the Night Vision effect for video rendering in the Flutter WebRTC plugin and adjust its intensity.
 
 ## Overview
 
 - The Night Vision effect brightens shadows while preserving color.
-- On Android, it uses a GPU shader drawer (`NightVisionRenderer`) integrated in `FlutterRTCVideoRenderer`.
+- Works on Android and iOS.
 - You control it from Dart using extension methods on `RTCVideoRenderer`.
-
-Key files:
-- `lib/rtc_video_renderer_extensions.dart` (exports platform extensions)
-- `lib/src/native/rtc_video_renderer_extensions.dart` (Dart API - Android native path)
-- `android/src/main/java/com/cloudwebrtc/webrtc/FlutterRTCVideoRenderer.java` (native toggle + intensity)
-- `android/src/main/java/com/cloudwebrtc/webrtc/video/NightVisionRenderer.java` (GLSL shader implementation)
 
 ## Step-by-step Implementation
 
@@ -61,8 +55,56 @@ await _renderer.dispose();
 ```
 
 Notes:
-- On Android, intensity updates do not reinitialize the drawer; uniforms are updated live.
+- Intensity updates do not require reinitialization; parameters are updated live while enabled.
 - Calls must be made after the renderer is initialized (non-null `textureId`).
+
+### Apply Night Vision only to remote streams
+
+Night Vision is applied per `RTCVideoRenderer`. To affect only the remote stream, call the API on the renderer that displays the remote video, and do not call it on your local preview renderer.
+
+```dart
+final localRenderer = RTCVideoRenderer();
+final remoteRenderer = RTCVideoRenderer();
+
+await localRenderer.initialize();
+await remoteRenderer.initialize();
+
+// Bind sources
+localRenderer.srcObject = localStream;   // your camera/mic stream
+remoteRenderer.srcObject = remoteStream; // track(s) from the peer
+
+// Enable Night Vision ONLY for remote
+await remoteRenderer.setRemoteNightVision(true);
+await remoteRenderer.setRemoteNightVisionIntensity(0.7);
+
+// Leave local preview normal (no calls needed on localRenderer)
+```
+
+Notes:
+- Scope is determined by which `RTCVideoRenderer` instance you call these methods on.
+- If you have multiple remote renderers, apply Night Vision to each one as needed.
+
+### Apply Night Vision to the local preview
+
+Night Vision can be applied to your local preview by targeting the local preview `RTCVideoRenderer`.
+
+```dart
+final localRenderer = RTCVideoRenderer();
+await localRenderer.initialize();
+
+// Bind your local camera/microphone stream
+localRenderer.srcObject = localStream;
+
+// Enable Night Vision for LOCAL preview
+await localRenderer.setRemoteNightVision(true);
+await localRenderer.setRemoteNightVisionIntensity(0.6);
+
+// Remote renderers remain unaffected unless you enable NV on them explicitly
+```
+
+Notes:
+- The method name `setRemoteNightVision` is historical; it applies to whichever renderer you call it on (local or remote).
+- Prefer renderer-level Night Vision; track-level `MediaStreamTrack.*` CPU APIs are not recommended.
 
 ## Prerequisites
 
@@ -99,14 +141,10 @@ await _renderer.setRemoteNightVision(false);
 
 - `RTCVideoRenderer.setRemoteNightVision(bool enabled)`
   - Enables/disables Night Vision for the given renderer.
-  - Android: switches the GL drawer to/from `NightVisionRenderer`.
 
 - `RTCVideoRenderer.setRemoteNightVisionIntensity(double intensity)`
   - Updates Night Vision strength in the range `0.0 .. 1.0`.
   - Can be called any time while Night Vision is enabled.
-
-Both methods are exported by `flutter_webrtc.dart` via:
-- `lib/rtc_video_renderer_extensions.dart` → `lib/src/native/rtc_video_renderer_extensions.dart`
 
 ## Recommended Settings
 
@@ -124,17 +162,7 @@ Both methods are exported by `flutter_webrtc.dart` via:
   - Ensure the call site targets the same `RTCVideoRenderer` instance used by your `RTCVideoView`.
 
 - CPU track-level Night Vision
-  - `MediaStreamTrack.setNightVision(...)` exists for completeness but is not used on Android (GPU path is preferred). Prefer the renderer-level API above.
-
-## Native Mapping (Android)
-
-- Method channel calls from Dart:
-  - `videoRendererSetNightVision` → `FlutterRTCVideoRenderer.enableNightVision(...)` / `disableNightVision()`
-  - `videoRendererSetNightVisionIntensity` → `FlutterRTCVideoRenderer.setNightVisionIntensity(...)`
-
-See:
-- `android/src/main/java/com/cloudwebrtc/webrtc/MethodCallHandlerImpl.java`
-- `android/src/main/java/com/cloudwebrtc/webrtc/FlutterRTCVideoRenderer.java`
+  - `MediaStreamTrack.setNightVision(...)` exists for completeness but is not used (GPU path is preferred). Prefer the renderer-level API above.
 
 ## Complete Example (Widget)
 
