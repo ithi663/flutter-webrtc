@@ -3,6 +3,10 @@ import 'package:webrtc_interface/webrtc_interface.dart';
 
 /// Extension methods for RTCVideoRenderer to add night vision functionality
 extension RTCVideoRendererNightVision on RTCVideoRenderer {
+  /// Enable/disable night vision on this renderer.
+  ///
+  /// Android: `isRemote` is ignored and the GPU drawer path is always used
+  /// for any renderer (local preview or remote).
   Future<void> setRemoteNightVision(bool enabled) async {
     // Native implementation for night vision
     if (textureId == null) {
@@ -16,6 +20,9 @@ extension RTCVideoRendererNightVision on RTCVideoRenderer {
     });
   }
 
+  /// Set night vision intensity on this renderer.
+  ///
+  /// Android: `isRemote` is ignored; updates uniforms only (no drawer reinit).
   Future<void> setRemoteNightVisionIntensity(double intensity) async {
     // Native implementation for night vision intensity
     if (textureId == null) {
@@ -35,6 +42,10 @@ extension RTCVideoRendererNightVision on RTCVideoRenderer {
 
 /// Extension methods for MediaStreamTrack to add night vision functionality
 extension MediaStreamTrackNightVision on MediaStreamTrack {
+  /// Enable/disable CPU-based night vision on a local video track.
+  ///
+  /// Android: CPU path is disabled and this call is a no-op with a warning.
+  /// Prefer using RTCVideoRendererNightVision methods instead.
   Future<void> setNightVision(bool enabled, {String? peerConnectionId}) async {
     // Native implementation for night vision
     if (kind != 'video') {
@@ -47,6 +58,10 @@ extension MediaStreamTrackNightVision on MediaStreamTrack {
     });
   }
 
+  /// Set CPU-based night vision intensity on a local video track.
+  ///
+  /// Android: CPU path is disabled and this call is a no-op with a warning.
+  /// Prefer using RTCVideoRendererNightVision methods instead.
   Future<void> setNightVisionIntensity(double intensity, {String? peerConnectionId}) async {
     // Native implementation for night vision intensity
     if (kind != 'video') {

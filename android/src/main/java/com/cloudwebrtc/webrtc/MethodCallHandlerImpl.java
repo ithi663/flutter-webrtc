@@ -12,6 +12,8 @@ import android.media.MediaRecorder;
 import android.media.AudioAttributes;
 import android.media.AudioDeviceInfo;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.util.LongSparseArray;
 import android.view.Surface;
@@ -41,7 +43,6 @@ import com.cloudwebrtc.webrtc.video.VideoCapturerInfo;
 import com.cloudwebrtc.webrtc.video.camera.CameraUtils;
 import com.cloudwebrtc.webrtc.video.camera.Point;
 import com.cloudwebrtc.webrtc.video.LocalVideoTrack;
-import com.cloudwebrtc.webrtc.video.NightVisionProcessor;
 import com.twilio.audioswitch.AudioDevice;
 
 import org.webrtc.AudioTrack;
@@ -293,6 +294,11 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
 
     // Don't attempt to access private mediaRecorders field directly
     // Instead, let the getUserMediaImpl.dispose() handle stopping recordings
+
+    // Release audio focus and deactivate audio routing
+    if (AudioSwitchManager.instance != null) {
+      AudioSwitchManager.instance.stop();
+    }
 
     Log.d(TAG, "stopAll() - all WebRTC media resources released but infrastructure maintained");
   }
@@ -943,23 +949,21 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
         LocalTrack localTrack = getLocalTrack(trackId);
         if (localTrack instanceof LocalVideoTrack) {
           LocalVideoTrack localVideoTrack = (LocalVideoTrack) localTrack;
-          Log.d(TAG, String.format("Setting night vision for track %s: %s", trackId, enabled ? "enabled" : "disabled"));
-
-          if (enabled) {
-            // Create and add night vision processor if not exists
-            if (localVideoTrack.nightVisionProcessor == null) {
-              localVideoTrack.nightVisionProcessor = new NightVisionProcessor();
-              localVideoTrack.addProcessor(localVideoTrack.nightVisionProcessor);
-              Log.d(TAG, "Night vision processor created and added to track " + trackId);
+          Log.w(TAG,
+              "videoTrackSetNightVision: CPU night vision path is disabled on Android; use renderer-based night vision.");
+          // Ensure any previously attached CPU processor is cleaned up.
+          if (localVideoTrack.nightVisionProcessor != null) {
+            try {
+              localVideoTrack.removeProcessor(localVideoTrack.nightVisionProcessor);
+            } catch (Exception e) {
+              Log.w(TAG, "Failed removing CPU night vision processor from track " + trackId + ": " + e.getMessage());
             }
-            localVideoTrack.nightVisionProcessor.setEnabled(true);
-            localVideoTrack.nightVisionProcessor.setIntensity(0.7f); // Set default intensity
-            Log.d(TAG, "Night vision enabled with intensity 0.7 for track " + trackId);
-          } else {
-            if (localVideoTrack.nightVisionProcessor != null) {
-              localVideoTrack.nightVisionProcessor.setEnabled(false);
-              Log.d(TAG, "Night vision disabled for track " + trackId);
+            try {
+              localVideoTrack.nightVisionProcessor.release();
+            } catch (Exception e) {
+              Log.w(TAG, "Failed releasing CPU night vision processor for track " + trackId + ": " + e.getMessage());
             }
+            localVideoTrack.nightVisionProcessor = null;
           }
           result.success(null);
         } else {
@@ -979,15 +983,9 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
 
         LocalTrack localTrack = getLocalTrack(trackId);
         if (localTrack instanceof LocalVideoTrack) {
-          LocalVideoTrack localVideoTrack = (LocalVideoTrack) localTrack;
-          if (localVideoTrack.nightVisionProcessor != null) {
-            Log.d(TAG,
-                String.format("Setting night vision intensity for track %s: %.2f", trackId, intensity.floatValue()));
-            localVideoTrack.nightVisionProcessor.setIntensity(intensity.floatValue());
-            result.success(null);
-          } else {
-            resultError("videoTrackSetNightVisionIntensity", "Night vision not initialized", result);
-          }
+          Log.w(TAG,
+              "videoTrackSetNightVisionIntensity: CPU night vision path is disabled on Android; use renderer-based night vision.");
+          result.success(null);
         } else {
           resultError("videoTrackSetNightVisionIntensity", "Track not found", result);
         }
@@ -1008,15 +1006,16 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
           resultError("videoRendererSetNightVision", "Renderer not found", result);
           return;
         }
-
-        if (isRemote != null && isRemote) {
-          // Use new drawer-based GPU path.
+        // Always use drawer-based GPU path regardless of isRemote.
+        // Ensure execution on UI thread as GL operations require it.
+        Handler mainHandler = new Handler(Looper.getMainLooper());
+        mainHandler.post(() -> {
           if (enabled) {
-            renderer.enableNightVision(0.7f);
+            renderer.enableNightVision(FlutterRTCVideoRenderer.DEFAULT_NIGHT_VISION_INTENSITY);
           } else {
             renderer.disableNightVision();
           }
-        }
+        });
         result.success(null);
         break;
       }
@@ -1035,10 +1034,10 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
           resultError("videoRendererSetNightVisionIntensity", "Renderer not found", result);
           return;
         }
-
-        if (isRemote != null && isRemote) {
-          renderer.setNightVisionIntensity(intensity.floatValue());
-        }
+        // Always update intensity on the active drawer.
+        // Ensure execution on UI thread as GL operations require it.
+        Handler mainHandler = new Handler(Looper.getMainLooper());
+        mainHandler.post(() -> renderer.setNightVisionIntensity(intensity.floatValue()));
         result.success(null);
         break;
       }

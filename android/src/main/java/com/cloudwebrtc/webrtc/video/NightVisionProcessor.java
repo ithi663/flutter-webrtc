@@ -14,7 +14,12 @@ import java.nio.ByteBuffer;
  * processing.
  * Uses NightVisionRenderer for GPU-accelerated real-time night vision
  * enhancement.
+ *
+ * @deprecated Android now uses a GPU drawer-based renderer path exclusively.
+ *             The CPU processing path is disabled and this processor is no longer
+ *             invoked from the Android handlers. Kept for compatibility only.
  */
+@Deprecated
 public class NightVisionProcessor implements com.cloudwebrtc.webrtc.video.LocalVideoTrack.ExternalVideoFrameProcessing {
     private static final String TAG = "NightVisionProcessor";
 

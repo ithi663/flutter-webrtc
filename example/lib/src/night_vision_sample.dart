@@ -172,15 +172,12 @@ class _NightVisionSampleState extends State<NightVisionSample> {
       _localNightVisionEnabled = !_localNightVisionEnabled;
     });
 
-    // Apply to local video track
-    var videoTracks = _localStream!.getVideoTracks();
-    if (videoTracks.isNotEmpty) {
-      try {
-        await videoTracks[0].setNightVision(_localNightVisionEnabled);
-        print('Local night vision ${_localNightVisionEnabled ? 'enabled' : 'disabled'}');
-      } catch (e) {
-        print('Error setting local night vision: $e');
-      }
+    // Apply GPU night vision to the local renderer (Android uses GPU-only path)
+    try {
+      await _localRenderer.setRemoteNightVision(_localNightVisionEnabled);
+      print('Local night vision ${_localNightVisionEnabled ? 'enabled' : 'disabled'}');
+    } catch (e) {
+      print('Error setting local night vision: $e');
     }
   }
 
@@ -191,14 +188,12 @@ class _NightVisionSampleState extends State<NightVisionSample> {
       _localNightVisionIntensity = intensity;
     });
 
-    var videoTracks = _localStream!.getVideoTracks();
-    if (videoTracks.isNotEmpty) {
-      try {
-        await videoTracks[0].setNightVisionIntensity(intensity);
-        print('Local night vision intensity set to: $intensity');
-      } catch (e) {
-        print('Error setting local night vision intensity: $e');
-      }
+    // Update GPU night vision intensity on the local renderer
+    try {
+      await _localRenderer.setRemoteNightVisionIntensity(intensity);
+      print('Local night vision intensity set to: $intensity');
+    } catch (e) {
+      print('Error setting local night vision intensity: $e');
     }
   }
 

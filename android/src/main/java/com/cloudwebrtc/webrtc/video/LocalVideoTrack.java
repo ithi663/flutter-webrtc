@@ -31,6 +31,12 @@ public class LocalVideoTrack extends LocalTrack {
     private List<ExternalVideoFrameProcessing> processors = new ArrayList<>();
 
     // Night vision processor for enhancing low-light video
+    /**
+     * @deprecated Android uses GPU-only renderer-based night vision.
+     * This CPU processor is not invoked by the Android handlers and will be
+     * cleaned up when encountered. Prefer renderer night vision APIs instead.
+     */
+    @Deprecated
     public NightVisionProcessor nightVisionProcessor = null;
 
     // Video processor that integrates with WebRTC pipeline

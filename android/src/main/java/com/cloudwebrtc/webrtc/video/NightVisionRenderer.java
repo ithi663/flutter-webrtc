@@ -19,12 +19,19 @@ import java.nio.FloatBuffer;
  *
  * GPU-accelerated OpenGL ES shader implementation for real-time night vision
  * processing.
- * Features:
- * - Custom fragment shader with luminance calculation and gamma correction
- * - Contrast enhancement for low-light conditions
- * - Bilateral filter approximation for noise reduction
- * - Adaptive histogram equalization
- * - Support for TextureBuffer (GPU-to-GPU) and I420Buffer processing
+ *
+ * Changes in this version:
+ * - Shadow-only enhancement: gamma/contrast/tint are applied only to darker
+ * pixels, leaving bright
+ * areas largely unchanged. This prevents bright rooms from getting brighter and
+ * focuses the
+ * effect on dark regions.
+ * - Tint moderation: tint strength scales with local luminance within the dark
+ * region to avoid
+ * turning near-black noise into green patches. Stronger green spill
+ * suppression.
+ * - Retains bilateral filtering and adaptive gain, but both are driven by a
+ * smooth shadow mask.
  */
 public class NightVisionRenderer implements RendererCommon.GlDrawer {
     private static final String TAG = "NightVisionRenderer";
@@ -37,12 +44,13 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
     // Vertex buffer for screen quad
     private FloatBuffer vertexBuffer;
 
-    // Night vision configuration
+    // Night vision configuration (defaults tuned for subtle, shadow-focused lift)
     private float intensity = 0.6f;
-    private float gamma = 0.4f;
+    private float gamma = 0.5f;
     private float brightnessThreshold = 0.3f;
-    private float contrast = 1.8f;
+    private float contrast = 2.0f;
     private float noiseReduction = 0.3f;
+    private float tintStrength = 0.0f;
 
     // Performance statistics
     private long frameCount = 0;
@@ -59,7 +67,7 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "  tc = (texMatrix * vec4(in_tc, 0.0, 1.0)).xy;\n" +
             "}\n";
 
-    // Night vision fragment shader for RGB textures
+    // Night vision fragment shader for RGB textures (shadow-only enhancement)
     private static final String RGB_FRAGMENT_SHADER = "precision mediump float;\n" +
             "varying vec2 tc;\n" +
             "uniform sampler2D tex;\n" +
@@ -68,67 +76,59 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "uniform float u_brightnessThreshold;\n" +
             "uniform float u_contrast;\n" +
             "uniform float u_noiseReduction;\n" +
+            "uniform float u_tintStrength;\n" +
             "uniform vec2 u_texSize;\n" +
             "\n" +
             "// Bilateral filter approximation for noise reduction\n" +
-            "vec3 bilateralFilter(vec2 coord) {\n" +
-            "  vec2 texelSize = 1.0 / u_texSize;\n" +
-            "  vec3 center = texture2D(tex, coord).rgb;\n" +
-            "  vec3 result = center;\n" +
-            "  float totalWeight = 1.0;\n" +
-            "  \n" +
-            "  // Sample neighboring pixels\n" +
-            "  for (int x = -1; x <= 1; x++) {\n" +
-            "    for (int y = -1; y <= 1; y++) {\n" +
-            "      if (x == 0 && y == 0) continue;\n" +
-            "      \n" +
-            "      vec2 offset = vec2(float(x), float(y)) * texelSize * u_noiseReduction;\n" +
-            "      vec3 neighbor = texture2D(tex, coord + offset).rgb;\n" +
-            "      \n" +
-            "      // Weight based on color similarity\n" +
-            "      float colorDiff = length(neighbor - center);\n" +
-            "      float weight = exp(-colorDiff * 10.0);\n" +
-            "      \n" +
-            "      result += neighbor * weight;\n" +
-            "      totalWeight += weight;\n" +
+            "vec3 bilateralFilter(vec2 coord){\n" +
+            "  vec2 texelSize=1.0/u_texSize;\n" +
+            "  vec3 center=texture2D(tex,coord).rgb;\n" +
+            "  vec3 result=center;\n" +
+            "  float totalWeight=1.0;\n" +
+            "  const float expFactor=10.0;\n" +
+            "  for(int x=-1;x<=1;x++){\n" +
+            "    for(int y=-1;y<=1;y++){\n" +
+            "      if(x==0&&y==0) continue;\n" +
+            "      vec2 offset=vec2(float(x),float(y))*texelSize*u_noiseReduction;\n" +
+            "      vec3 neighbor=texture2D(tex,coord+offset).rgb;\n" +
+            "      float colorDiff=length(neighbor-center);\n" +
+            "      float weight=exp(-colorDiff*expFactor);\n" +
+            "      result+=neighbor*weight;\n" +
+            "      totalWeight+=weight;\n" +
             "    }\n" +
             "  }\n" +
-            "  \n" +
-            "  return result / totalWeight;\n" +
+            "  return result/totalWeight;\n" +
             "}\n" +
             "\n" +
-            "void main() {\n" +
-            "  vec3 color = bilateralFilter(tc);\n" +
-            "  \n" +
-            "  // Calculate luminance\n" +
-            "  float luminance = dot(color.rgb, vec3(0.299, 0.587, 0.114));\n" +
-            "  \n" +
-            "  // Only enhance pixels below brightness threshold\n" +
-            "  if (luminance < u_brightnessThreshold) {\n" +
-            "    // Gamma correction for dark areas\n" +
-            "    color.rgb = pow(color.rgb, vec3(u_gamma));\n" +
-            "    \n" +
-            "    // Contrast enhancement\n" +
-            "    color.rgb = (color.rgb - 0.5) * u_contrast + 0.5;\n" +
-            "    \n" +
-            "    // Green tint for night vision effect\n" +
-            "    vec3 nightVisionColor = vec3(color.g * 0.3, color.g * 1.2, color.g * 0.2);\n" +
-            "    \n" +
-            "    // Adaptive histogram equalization approximation\n" +
-            "    float adaptiveGain = 1.0 + (u_brightnessThreshold - luminance) * 2.0;\n" +
-            "    nightVisionColor *= adaptiveGain;\n" +
-            "    \n" +
-            "    // Blend with original based on intensity\n" +
-            "    color.rgb = mix(color.rgb, nightVisionColor, u_intensity);\n" +
-            "  }\n" +
-            "  \n" +
-            "  // Clamp to prevent overexposure\n" +
-            "  color.rgb = clamp(color.rgb, 0.0, 1.0);\n" +
-            "  \n" +
-            "  gl_FragColor = vec4(color.rgb, 1.0);\n" +
+            "void main(){\n" +
+            "  vec3 color=bilateralFilter(tc);\n" +
+            "  float luma=dot(color,vec3(0.299,0.587,0.114));\n" +
+            "  float shadowMask=1.0-smoothstep(u_brightnessThreshold-0.05,u_brightnessThreshold+0.15,luma);\n" +
+            "  float liftedLuma=pow(luma,u_gamma);\n" +
+            "  float gain=clamp(1.0+(u_brightnessThreshold-luma)*2.5,1.0,3.0);\n" +
+            "  float targetLuma=clamp(liftedLuma*gain,0.0,1.0);\n" +
+            "  vec3 chroma=color/max(luma,0.0001);\n" +
+            "  vec3 boosted=chroma*targetLuma;\n" +
+            "  float desatAmt=0.2*shadowMask;\n" +
+            "  vec3 gray=vec3(dot(boosted,vec3(0.299,0.587,0.114)));\n" +
+            "  boosted=mix(boosted,gray,desatAmt);\n" +
+            "  vec2 t=1.0/u_texSize;\n" +
+            "  float lyL=dot(texture2D(tex,tc+vec2(-t.x,0.0)).rgb,vec3(0.299,0.587,0.114));\n" +
+            "  float lyR=dot(texture2D(tex,tc+vec2( t.x,0.0)).rgb,vec3(0.299,0.587,0.114));\n" +
+            "  float lyT=dot(texture2D(tex,tc+vec2(0.0,-t.y)).rgb,vec3(0.299,0.587,0.114));\n" +
+            "  float lyB=dot(texture2D(tex,tc+vec2(0.0, t.y)).rgb,vec3(0.299,0.587,0.114));\n" +
+            "  float grad=abs(lyR-lyL)+abs(lyB-lyT);\n" +
+            "  float edgeMask=1.0-smoothstep(0.05,0.25,grad);\n" +
+            "  float localContrast=mix(1.0,u_contrast,shadowMask);\n" +
+            "  boosted=(boosted-0.5)*localContrast+0.5;\n" +
+            "  vec3 tinted=mix(boosted,boosted*vec3(0.9,1.0,0.9),clamp(u_tintStrength,0.0,1.0)*shadowMask);\n" +
+            "  float effect=shadowMask*edgeMask;\n" +
+            "  vec3 outColor=mix(color,tinted,u_intensity*effect);\n" +
+            "  outColor=clamp(outColor,0.0,1.0);\n" +
+            "  gl_FragColor=vec4(outColor,1.0);\n" +
             "}\n";
 
-    // Night vision fragment shader for YUV textures
+    // Night vision fragment shader for YUV textures (shadow-only enhancement)
     private static final String YUV_FRAGMENT_SHADER = "precision mediump float;\n" +
             "varying vec2 tc;\n" +
             "uniform sampler2D y_tex;\n" +
@@ -139,86 +139,44 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "uniform float u_brightnessThreshold;\n" +
             "uniform float u_contrast;\n" +
             "uniform float u_noiseReduction;\n" +
+            "uniform float u_tintStrength;\n" +
             "uniform vec2 u_texSize;\n" +
             "\n" +
             "// YUV to RGB conversion\n" +
-            "vec3 yuvToRgb(vec3 yuv) {\n" +
-            "  yuv.y -= 0.5;\n" +
-            "  yuv.z -= 0.5;\n" +
+            "vec3 yuvToRgb(vec3 yuv){\n" +
+            "  yuv.y-=0.5;\n" +
+            "  yuv.z-=0.5;\n" +
             "  return mat3(\n" +
-            "    1.0,      1.0,     1.0,\n" +
-            "    0.0,     -0.344,   1.772,\n" +
-            "    1.402,   -0.714,   0.0\n" +
-            "  ) * yuv;\n" +
+            "    1.0,1.0,1.0,\n" +
+            "    0.0,-0.344,1.772,\n" +
+            "    1.402,-0.714,0.0\n" +
+            "  )*yuv;\n" +
             "}\n" +
             "\n" +
-            "// Bilateral filter for YUV\n" +
-            "vec3 bilateralFilterYuv(vec2 coord) {\n" +
-            "  vec2 texelSize = 1.0 / u_texSize;\n" +
-            "  \n" +
-            "  float y = texture2D(y_tex, coord).r;\n" +
-            "  float u = texture2D(u_tex, coord).r;\n" +
-            "  float v = texture2D(v_tex, coord).r;\n" +
-            "  vec3 center = vec3(y, u, v);\n" +
-            "  \n" +
-            "  vec3 result = center;\n" +
-            "  float totalWeight = 1.0;\n" +
-            "  \n" +
-            "  // Sample neighboring pixels (simplified for performance)\n" +
-            "  for (int x = -1; x <= 1; x++) {\n" +
-            "    for (int y = -1; y <= 1; y++) {\n" +
-            "      if (x == 0 && y == 0) continue;\n" +
-            "      \n" +
-            "      vec2 offset = vec2(float(x), float(y)) * texelSize * u_noiseReduction;\n" +
-            "      float ny = texture2D(y_tex, coord + offset).r;\n" +
-            "      float nu = texture2D(u_tex, coord + offset).r;\n" +
-            "      float nv = texture2D(v_tex, coord + offset).r;\n" +
-            "      vec3 neighbor = vec3(ny, nu, nv);\n" +
-            "      \n" +
-            "      float colorDiff = length(neighbor - center);\n" +
-            "      float weight = exp(-colorDiff * 10.0);\n" +
-            "      \n" +
-            "      result += neighbor * weight;\n" +
-            "      totalWeight += weight;\n" +
-            "    }\n" +
-            "  }\n" +
-            "  \n" +
-            "  return result / totalWeight;\n" +
-            "}\n" +
-            "\n" +
-            "void main() {\n" +
-            "  vec3 yuv = bilateralFilterYuv(tc);\n" +
-            "  vec3 color = yuvToRgb(yuv);\n" +
-            "  \n" +
-            "  // Calculate luminance\n" +
-            "  float luminance = dot(color.rgb, vec3(0.299, 0.587, 0.114));\n" +
-            "  \n" +
-            "  // Only enhance pixels below brightness threshold\n" +
-            "  if (luminance < u_brightnessThreshold) {\n" +
-            "    // Gamma correction for dark areas\n" +
-            "    color.rgb = pow(color.rgb, vec3(u_gamma));\n" +
-            "    \n" +
-            "    // Contrast enhancement\n" +
-            "    color.rgb = (color.rgb - 0.5) * u_contrast + 0.5;\n" +
-            "    \n" +
-            "    // Green tint for night vision effect\n" +
-            "    vec3 nightVisionColor = vec3(color.g * 0.3, color.g * 1.2, color.g * 0.2);\n" +
-            "    \n" +
-            "    // Adaptive histogram equalization approximation\n" +
-            "    float adaptiveGain = 1.0 + (u_brightnessThreshold - luminance) * 2.0;\n" +
-            "    nightVisionColor *= adaptiveGain;\n" +
-            "    \n" +
-            "    // Blend with original based on intensity\n" +
-            "    color.rgb = mix(color.rgb, nightVisionColor, u_intensity);\n" +
-            "  }\n" +
-            "  \n" +
-            "  // Clamp to prevent overexposure\n" +
-            "  color.rgb = clamp(color.rgb, 0.0, 1.0);\n" +
-            "  \n" +
-            "  gl_FragColor = vec4(color.rgb, 1.0);\n" +
+            "void main(){\n" +
+            "  float y=texture2D(y_tex,tc).r;\n" +
+            "  float u=texture2D(u_tex,tc).r;\n" +
+            "  float v=texture2D(v_tex,tc).r;\n" +
+            "  float shadowMask=1.0-smoothstep(u_brightnessThreshold-0.05,u_brightnessThreshold+0.15,y);\n" +
+            "  float liftedY=pow(y,u_gamma);\n" +
+            "  float gain=clamp(1.0+(u_brightnessThreshold-y)*2.5,1.0,3.0);\n" +
+            "  float yEnhanced=clamp(liftedY*gain,0.0,1.0);\n" +
+            "  vec2 t=1.0/u_texSize;\n" +
+            "  float yL=texture2D(y_tex,tc+vec2(-t.x,0.0)).r;\n" +
+            "  float yR=texture2D(y_tex,tc+vec2( t.x,0.0)).r;\n" +
+            "  float yT=texture2D(y_tex,tc+vec2(0.0,-t.y)).r;\n" +
+            "  float yB=texture2D(y_tex,tc+vec2(0.0, t.y)).r;\n" +
+            "  float grad=abs(yR-yL)+abs(yB-yT);\n" +
+            "  float edgeMask=1.0-smoothstep(0.05,0.25,grad);\n" +
+            "  float localContrast=mix(1.0,u_contrast,shadowMask);\n" +
+            "  yEnhanced=(yEnhanced-0.5)*localContrast+0.5;\n" +
+            "  float effect=shadowMask*edgeMask;\n" +
+            "  float yOut=mix(y,yEnhanced,u_intensity*effect);\n" +
+            "  vec3 outColor=yuvToRgb(vec3(yOut,u,v));\n" +
+            "  gl_FragColor=vec4(clamp(outColor,0.0,1.0),1.0);\n" +
             "}\n";
 
-    // Night vision fragment shader for OES textures
+    // Night vision fragment shader for OES textures (shadow-only enhancement)
     private static final String OES_FRAGMENT_SHADER = "#extension GL_OES_EGL_image_external : require\n" +
             "precision mediump float;\n" +
             "varying vec2 tc;\n" +
@@ -228,64 +186,44 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "uniform float u_brightnessThreshold;\n" +
             "uniform float u_contrast;\n" +
             "uniform float u_noiseReduction;\n" +
+            "uniform float u_tintStrength;\n" +
             "uniform vec2 u_texSize;\n" +
             "\n" +
-            "// Bilateral filter for OES texture\n" +
-            "vec3 bilateralFilter(vec2 coord) {\n" +
-            "  vec2 texelSize = 1.0 / u_texSize;\n" +
-            "  vec3 center = texture2D(tex, coord).rgb;\n" +
-            "  vec3 result = center;\n" +
-            "  float totalWeight = 1.0;\n" +
-            "  \n" +
-            "  // Sample neighboring pixels\n" +
-            "  for (int x = -1; x <= 1; x++) {\n" +
-            "    for (int y = -1; y <= 1; y++) {\n" +
-            "      if (x == 0 && y == 0) continue;\n" +
-            "      \n" +
-            "      vec2 offset = vec2(float(x), float(y)) * texelSize * u_noiseReduction;\n" +
-            "      vec3 neighbor = texture2D(tex, coord + offset).rgb;\n" +
-            "      \n" +
-            "      // Weight based on color similarity\n" +
-            "      float colorDiff = length(neighbor - center);\n" +
-            "      float weight = exp(-colorDiff * 10.0);\n" +
-            "      \n" +
-            "      result += neighbor * weight;\n" +
-            "      totalWeight += weight;\n" +
+            "vec3 bilateralFilter(vec2 coord){\n" +
+            "  vec2 texelSize=1.0/u_texSize;\n" +
+            "  vec3 center=texture2D(tex,coord).rgb;\n" +
+            "  vec3 result=center;\n" +
+            "  float totalWeight=1.0;\n" +
+            "  const float expFactor=10.0;\n" +
+            "  for(int x=-1;x<=1;x++){\n" +
+            "    for(int y=-1;y<=1;y++){\n" +
+            "      if(x==0&&y==0) continue;\n" +
+            "      vec2 offset=vec2(float(x),float(y))*texelSize*u_noiseReduction;\n" +
+            "      vec3 neighbor=texture2D(tex,coord+offset).rgb;\n" +
+            "      float colorDiff=length(neighbor-center);\n" +
+            "      float weight=exp(-colorDiff*expFactor);\n" +
+            "      result+=neighbor*weight;\n" +
+            "      totalWeight+=weight;\n" +
             "    }\n" +
             "  }\n" +
-            "  \n" +
-            "  return result / totalWeight;\n" +
+            "  return result/totalWeight;\n" +
             "}\n" +
             "\n" +
-            "void main() {\n" +
-            "  vec3 color = bilateralFilter(tc);\n" +
-            "  \n" +
-            "  // Calculate luminance\n" +
-            "  float luminance = dot(color.rgb, vec3(0.299, 0.587, 0.114));\n" +
-            "  \n" +
-            "  // Only enhance pixels below brightness threshold\n" +
-            "  if (luminance < u_brightnessThreshold) {\n" +
-            "    // Gamma correction for dark areas\n" +
-            "    color.rgb = pow(color.rgb, vec3(u_gamma));\n" +
-            "    \n" +
-            "    // Contrast enhancement\n" +
-            "    color.rgb = (color.rgb - 0.5) * u_contrast + 0.5;\n" +
-            "    \n" +
-            "    // Green tint for night vision effect\n" +
-            "    vec3 nightVisionColor = vec3(color.g * 0.3, color.g * 1.2, color.g * 0.2);\n" +
-            "    \n" +
-            "    // Adaptive histogram equalization approximation\n" +
-            "    float adaptiveGain = 1.0 + (u_brightnessThreshold - luminance) * 2.0;\n" +
-            "    nightVisionColor *= adaptiveGain;\n" +
-            "    \n" +
-            "    // Blend with original based on intensity\n" +
-            "    color.rgb = mix(color.rgb, nightVisionColor, u_intensity);\n" +
-            "  }\n" +
-            "  \n" +
-            "  // Clamp to prevent overexposure\n" +
-            "  color.rgb = clamp(color.rgb, 0.0, 1.0);\n" +
-            "  \n" +
-            "  gl_FragColor = vec4(color.rgb, 1.0);\n" +
+            "void main(){\n" +
+            "  vec3 color=bilateralFilter(tc);\n" +
+            "  float luma=dot(color,vec3(0.299,0.587,0.114));\n" +
+            "  float shadowMask=1.0-smoothstep(u_brightnessThreshold-0.05,u_brightnessThreshold+0.15,luma);\n" +
+            "  float liftedLuma=pow(luma,u_gamma);\n" +
+            "  float gain=clamp(1.0+(u_brightnessThreshold-luma)*2.5,1.0,3.0);\n" +
+            "  float targetLuma=clamp(liftedLuma*gain,0.0,1.0);\n" +
+            "  vec3 chroma=color/max(luma,0.0001);\n" +
+            "  vec3 boosted=chroma*targetLuma;\n" +
+            "  float localContrast=mix(1.0,u_contrast,shadowMask);\n" +
+            "  boosted=(boosted-0.5)*localContrast+0.5;\n" +
+            "  vec3 tinted=mix(boosted,boosted*vec3(0.9,1.0,0.9),clamp(u_tintStrength,0.0,1.0)*shadowMask);\n" +
+            "  float effect=shadowMask;\n" +
+            "  vec3 outColor=mix(color,tinted,u_intensity*effect);\n" +
+            "  gl_FragColor=vec4(clamp(outColor,0.0,1.0),1.0);\n" +
             "}\n";
 
     // Vertex coordinates for screen quad
@@ -334,16 +272,18 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
      * Set night vision configuration parameters
      */
     public void setNightVisionConfig(float intensity, float gamma, float brightnessThreshold,
-            float contrast, float noiseReduction) {
+            float contrast, float noiseReduction, float tintStrength) {
         this.intensity = Math.max(0.0f, Math.min(1.0f, intensity));
         this.gamma = Math.max(0.1f, Math.min(2.0f, gamma));
         this.brightnessThreshold = Math.max(0.0f, Math.min(1.0f, brightnessThreshold));
         this.contrast = Math.max(0.5f, Math.min(3.0f, contrast));
         this.noiseReduction = Math.max(0.0f, Math.min(1.0f, noiseReduction));
+        this.tintStrength = Math.max(0.0f, Math.min(1.0f, tintStrength));
 
         Log.d(TAG, String.format(
-                "Night vision config updated: intensity=%.2f, gamma=%.2f, threshold=%.2f, contrast=%.2f, noise=%.2f",
-                intensity, gamma, brightnessThreshold, contrast, noiseReduction));
+                "Night vision config updated: intensity=%.2f, gamma=%.2f, threshold=%.2f, contrast=%.2f, noise=%.2f, tintStrength=%.2f",
+                this.intensity, this.gamma, this.brightnessThreshold, this.contrast, this.noiseReduction,
+                this.tintStrength));
     }
 
     /**
@@ -355,6 +295,7 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
         GLES20.glUniform1f(shader.getUniformLocation("u_brightnessThreshold"), brightnessThreshold);
         GLES20.glUniform1f(shader.getUniformLocation("u_contrast"), contrast);
         GLES20.glUniform1f(shader.getUniformLocation("u_noiseReduction"), noiseReduction);
+        GLES20.glUniform1f(shader.getUniformLocation("u_tintStrength"), tintStrength);
         GLES20.glUniform2f(shader.getUniformLocation("u_texSize"), frameWidth, frameHeight);
     }
 
@@ -395,7 +336,7 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
 
         long currentTime = System.currentTimeMillis();
         if (currentTime - lastStatsTime >= 5000) { // Log every 5 seconds
-            double avgFrameTime = (double) totalProcessingTime / frameCount / 1_000_000.0; // Convert to ms
+            double avgFrameTime = (double) totalProcessingTime / frameCount / 1_000_000.0; // ms
             double fps = 1000.0 / avgFrameTime;
 
             Log.d(TAG, String.format("Night vision stats: %.1f FPS, %.2f ms avg frame time, %d frames processed",

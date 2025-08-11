@@ -7,7 +7,6 @@ import android.view.Surface;
 import com.cloudwebrtc.webrtc.utils.AnyThreadSink;
 import com.cloudwebrtc.webrtc.utils.ConstraintsMap;
 import com.cloudwebrtc.webrtc.utils.EglUtils;
-import com.cloudwebrtc.webrtc.video.NightVisionVideoSink;
 import com.cloudwebrtc.webrtc.video.NightVisionRenderer;
 
 import java.util.List;
@@ -30,13 +29,13 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
 
     private String ownerTag;
 
-    // Night vision components for remote stream processing
-    public NightVisionVideoSink nightVisionVideoSink = null;
+    // Default intensity for night-vision effect
+    public static final float DEFAULT_NIGHT_VISION_INTENSITY = 0.7f;
 
     // Night-vision state for drawer-based GPU processing (Android only)
     private boolean nightVisionEnabled = false;
     private NightVisionRenderer nightVisionDrawer = null;
-    private float nightVisionIntensity = 0.7f;
+    private float nightVisionIntensity = DEFAULT_NIGHT_VISION_INTENSITY;
 
     /**
      * The {@code RendererEvents} which listens to rendering events reported by
@@ -298,11 +297,12 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
 
     /** Enable GPU night-vision processing for this renderer. */
     public void enableNightVision(float intensity) {
-        if (nightVisionEnabled && Math.abs(intensity - nightVisionIntensity) < 0.01f) {
+        float clamped = Math.max(0.0f, Math.min(1.0f, intensity));
+        if (nightVisionEnabled && Math.abs(clamped - nightVisionIntensity) < 0.01f) {
             return; // already active with same intensity
         }
 
-        nightVisionIntensity = intensity;
+        nightVisionIntensity = clamped;
 
         if (nightVisionDrawer == null) {
             nightVisionDrawer = new NightVisionRenderer();
@@ -312,7 +312,8 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
                 0.3f + (nightVisionIntensity * 0.5f), // gamma
                 0.3f, // brightness threshold
                 1.0f + (nightVisionIntensity * 0.8f), // contrast
-                nightVisionIntensity * 0.3f // noiseReduction
+                nightVisionIntensity * 0.3f, // noiseReduction
+                nightVisionIntensity // tintStrength
         );
 
         reinitDrawer(nightVisionDrawer);
@@ -335,16 +336,30 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
         }
     }
 
+    /**
+     * Release night-vision resources without re-initializing the GL drawer.
+     * Use this during disposal to avoid unnecessary init/release churn.
+     */
+    private void releaseNightVisionResources() {
+        nightVisionEnabled = false;
+        if (nightVisionDrawer != null) {
+            nightVisionDrawer.release();
+            nightVisionDrawer = null;
+        }
+    }
+
     /** Update intensity while night-vision is enabled. */
     public void setNightVisionIntensity(float intensity) {
-        nightVisionIntensity = intensity;
+        float clamped = Math.max(0.0f, Math.min(1.0f, intensity));
+        nightVisionIntensity = clamped;
         if (nightVisionDrawer != null) {
             nightVisionDrawer.setNightVisionConfig(
                     nightVisionIntensity,
                     0.3f + (nightVisionIntensity * 0.5f),
                     0.3f,
                     1.0f + (nightVisionIntensity * 0.8f),
-                    nightVisionIntensity * 0.3f);
+                    nightVisionIntensity * 0.3f,
+                    nightVisionIntensity);
         }
     }
 
@@ -358,10 +373,9 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
     public void Dispose() {
         Log.d(TAG, "FlutterRTCVideoRenderer.Dispose() - cleaning up renderer resources");
 
-        // Ensure night-vision drawer is released.
-        if (nightVisionDrawer != null) {
-            nightVisionDrawer.release();
-            nightVisionDrawer = null;
+        // Ensure night-vision resources are released without re-initializing GL drawer.
+        if (nightVisionEnabled || nightVisionDrawer != null) {
+            releaseNightVisionResources();
         }
 
         if (surfaceTextureRenderer != null) {
