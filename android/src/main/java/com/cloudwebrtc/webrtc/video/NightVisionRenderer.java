@@ -78,6 +78,7 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "uniform float u_noiseReduction;\n" +
             "uniform float u_tintStrength;\n" +
             "uniform vec2 u_texSize;\n" +
+            "uniform float u_ditherStrength;\n" +
             "\n" +
             "// Bilateral filter approximation for noise reduction\n" +
             "vec3 bilateralFilter(vec2 coord){\n" +
@@ -91,7 +92,9 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "      if(x==0&&y==0) continue;\n" +
             "      vec2 offset=vec2(float(x),float(y))*texelSize*u_noiseReduction;\n" +
             "      vec3 neighbor=texture2D(tex,coord+offset).rgb;\n" +
-            "      float colorDiff=length(neighbor-center);\n" +
+            "      float centerLuma=dot(center,vec3(0.299,0.587,0.114));\n" +
+            "      float neighborLuma=dot(neighbor,vec3(0.299,0.587,0.114));\n" +
+            "      float colorDiff=abs(neighborLuma-centerLuma);\n" +
             "      float weight=exp(-colorDiff*expFactor);\n" +
             "      result+=neighbor*weight;\n" +
             "      totalWeight+=weight;\n" +
@@ -119,6 +122,10 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "  float lyB=dot(texture2D(tex,tc+vec2(0.0, t.y)).rgb,vec3(0.299,0.587,0.114));\n" +
             "  float grad=abs(lyR-lyL)+abs(lyB-lyT);\n" +
             "  float edgeMask=1.0-smoothstep(0.05,0.25,grad);\n" +
+            "  float blurLuma=(lyL+lyR+lyT+lyB+luma)*0.2;\n" +
+            "  float highpass=luma-blurLuma;\n" +
+            "  float detailScale=1.0+highpass*(0.75*u_intensity);\n" +
+            "  boosted*=mix(1.0,detailScale,shadowMask*edgeMask);\n" +
             "  float localContrast=mix(1.0,u_contrast,shadowMask);\n" +
             "  boosted=(boosted-0.5)*localContrast+0.5;\n" +
             "  vec3 tinted=mix(boosted,boosted*vec3(0.9,1.0,0.9),clamp(u_tintStrength,0.0,1.0)*shadowMask);\n" +
@@ -126,6 +133,9 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "  vec3 outColor=mix(color,tinted,u_intensity*effect);\n" +
             "  outColor=clamp(outColor,0.0,1.0);\n" +
             "  float grayLuma=dot(outColor,vec3(0.299,0.587,0.114));\n" +
+            "  float ditherAmp=u_ditherStrength + 1e-6*(u_tintStrength + u_noiseReduction);\n" +
+            "  float dither=(fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-0.5)*ditherAmp;\n" +
+            "  grayLuma=clamp(grayLuma+dither,0.0,1.0);\n" +
             "  gl_FragColor=vec4(vec3(grayLuma),1.0);\n" +
             "}\n";
 
@@ -142,6 +152,7 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "uniform float u_noiseReduction;\n" +
             "uniform float u_tintStrength;\n" +
             "uniform vec2 u_texSize;\n" +
+            "uniform float u_ditherStrength;\n" +
             "\n" +
             "// YUV to RGB conversion\n" +
             "vec3 yuvToRgb(vec3 yuv){\n" +
@@ -176,6 +187,9 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "  vec3 outColor=yuvToRgb(vec3(yOut,u,v));\n" +
             "  outColor=clamp(outColor,0.0,1.0);\n" +
             "  float grayLuma=dot(outColor,vec3(0.299,0.587,0.114));\n" +
+            "  float dither=(fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-0.5)*u_ditherStrength;\n"
+            +
+            "  grayLuma=clamp(grayLuma+dither,0.0,1.0);\n" +
             "  gl_FragColor=vec4(vec3(grayLuma),1.0);\n" +
             "}\n";
 
@@ -191,6 +205,7 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "uniform float u_noiseReduction;\n" +
             "uniform float u_tintStrength;\n" +
             "uniform vec2 u_texSize;\n" +
+            "uniform float u_ditherStrength;\n" +
             "\n" +
             "vec3 bilateralFilter(vec2 coord){\n" +
             "  vec2 texelSize=1.0/u_texSize;\n" +
@@ -203,7 +218,9 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "      if(x==0&&y==0) continue;\n" +
             "      vec2 offset=vec2(float(x),float(y))*texelSize*u_noiseReduction;\n" +
             "      vec3 neighbor=texture2D(tex,coord+offset).rgb;\n" +
-            "      float colorDiff=length(neighbor-center);\n" +
+            "      float centerLuma=dot(center,vec3(0.299,0.587,0.114));\n" +
+            "      float neighborLuma=dot(neighbor,vec3(0.299,0.587,0.114));\n" +
+            "      float colorDiff=abs(neighborLuma-centerLuma);\n" +
             "      float weight=exp(-colorDiff*expFactor);\n" +
             "      result+=neighbor*weight;\n" +
             "      totalWeight+=weight;\n" +
@@ -221,13 +238,27 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "  float targetLuma=clamp(liftedLuma*gain,0.0,1.0);\n" +
             "  vec3 chroma=color/max(luma,0.0001);\n" +
             "  vec3 boosted=chroma*targetLuma;\n" +
+            "  vec2 t=1.0/u_texSize;\n" +
+            "  float lyL=dot(texture2D(tex,tc+vec2(-t.x,0.0)).rgb,vec3(0.299,0.587,0.114));\n" +
+            "  float lyR=dot(texture2D(tex,tc+vec2( t.x,0.0)).rgb,vec3(0.299,0.587,0.114));\n" +
+            "  float lyT=dot(texture2D(tex,tc+vec2(0.0,-t.y)).rgb,vec3(0.299,0.587,0.114));\n" +
+            "  float lyB=dot(texture2D(tex,tc+vec2(0.0, t.y)).rgb,vec3(0.299,0.587,0.114));\n" +
+            "  float grad=abs(lyR-lyL)+abs(lyB-lyT);\n" +
+            "  float edgeMask=1.0-smoothstep(0.05,0.25,grad);\n" +
+            "  float blurLuma=(lyL+lyR+lyT+lyB+luma)*0.2;\n" +
+            "  float highpass=luma-blurLuma;\n" +
+            "  float detailScale=1.0+highpass*(0.75*u_intensity);\n" +
+            "  boosted*=mix(1.0,detailScale,shadowMask*edgeMask);\n" +
             "  float localContrast=mix(1.0,u_contrast,shadowMask);\n" +
             "  boosted=(boosted-0.5)*localContrast+0.5;\n" +
             "  vec3 tinted=mix(boosted,boosted*vec3(0.9,1.0,0.9),clamp(u_tintStrength,0.0,1.0)*shadowMask);\n" +
-            "  float effect=shadowMask;\n" +
+            "  float effect=shadowMask*edgeMask;\n" +
             "  vec3 outColor=mix(color,tinted,u_intensity*effect);\n" +
             "  outColor=clamp(outColor,0.0,1.0);\n" +
             "  float grayLuma=dot(outColor,vec3(0.299,0.587,0.114));\n" +
+            "  float dither=(fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-0.5)*u_ditherStrength;\n"
+            +
+            "  grayLuma=clamp(grayLuma+dither,0.0,1.0);\n" +
             "  gl_FragColor=vec4(vec3(grayLuma),1.0);\n" +
             "}\n";
 
@@ -302,6 +333,7 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
         GLES20.glUniform1f(shader.getUniformLocation("u_noiseReduction"), noiseReduction);
         GLES20.glUniform1f(shader.getUniformLocation("u_tintStrength"), tintStrength);
         GLES20.glUniform2f(shader.getUniformLocation("u_texSize"), frameWidth, frameHeight);
+        GLES20.glUniform1f(shader.getUniformLocation("u_ditherStrength"), 0.0125f * intensity);
     }
 
     /**
