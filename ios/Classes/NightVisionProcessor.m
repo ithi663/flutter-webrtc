@@ -77,6 +77,9 @@
     // Brightness adjustment filter
     _brightnessFilter = [CIFilter filterWithName:@"CIColorControls"];
 
+    // Grayscale (desaturation) filter
+    _grayscaleFilter = [CIFilter filterWithName:@"CIColorControls"];
+
     NSLog(@"[NightVisionProcessor] Core Image filters initialized");
 }
 
@@ -201,6 +204,11 @@
     [_contrastFilter setValue:@(intensity * 0.2) forKey:kCIInputBrightnessKey];
     [_contrastFilter setValue:@(1.0 + intensity * 0.3) forKey:kCIInputSaturationKey];
     workingImage = _contrastFilter.outputImage;
+
+    // Convert to grayscale by removing saturation
+    [_grayscaleFilter setValue:workingImage forKey:kCIInputImageKey];
+    [_grayscaleFilter setValue:@(0.0) forKey:kCIInputSaturationKey];
+    workingImage = _grayscaleFilter.outputImage;
 
     // Blend enhanced result with original based on intensity
     CIFilter *blendFilter = [CIFilter filterWithName:@"CISourceOverCompositing"];
@@ -359,6 +367,7 @@
     _contrastFilter = nil;
     _noiseReductionFilter = nil;
     _brightnessFilter = nil;
+    _grayscaleFilter = nil;
     _nightVisionKernel = nil;
     _metalDevice = nil;
 

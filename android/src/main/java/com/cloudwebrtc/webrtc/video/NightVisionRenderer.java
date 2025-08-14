@@ -125,7 +125,8 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "  float effect=shadowMask*edgeMask;\n" +
             "  vec3 outColor=mix(color,tinted,u_intensity*effect);\n" +
             "  outColor=clamp(outColor,0.0,1.0);\n" +
-            "  gl_FragColor=vec4(outColor,1.0);\n" +
+            "  float grayLuma=dot(outColor,vec3(0.299,0.587,0.114));\n" +
+            "  gl_FragColor=vec4(vec3(grayLuma),1.0);\n" +
             "}\n";
 
     // Night vision fragment shader for YUV textures (shadow-only enhancement)
@@ -173,7 +174,9 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "  float effect=shadowMask*edgeMask;\n" +
             "  float yOut=mix(y,yEnhanced,u_intensity*effect);\n" +
             "  vec3 outColor=yuvToRgb(vec3(yOut,u,v));\n" +
-            "  gl_FragColor=vec4(clamp(outColor,0.0,1.0),1.0);\n" +
+            "  outColor=clamp(outColor,0.0,1.0);\n" +
+            "  float grayLuma=dot(outColor,vec3(0.299,0.587,0.114));\n" +
+            "  gl_FragColor=vec4(vec3(grayLuma),1.0);\n" +
             "}\n";
 
     // Night vision fragment shader for OES textures (shadow-only enhancement)
@@ -223,7 +226,9 @@ public class NightVisionRenderer implements RendererCommon.GlDrawer {
             "  vec3 tinted=mix(boosted,boosted*vec3(0.9,1.0,0.9),clamp(u_tintStrength,0.0,1.0)*shadowMask);\n" +
             "  float effect=shadowMask;\n" +
             "  vec3 outColor=mix(color,tinted,u_intensity*effect);\n" +
-            "  gl_FragColor=vec4(clamp(outColor,0.0,1.0),1.0);\n" +
+            "  outColor=clamp(outColor,0.0,1.0);\n" +
+            "  float grayLuma=dot(outColor,vec3(0.299,0.587,0.114));\n" +
+            "  gl_FragColor=vec4(vec3(grayLuma),1.0);\n" +
             "}\n";
 
     // Vertex coordinates for screen quad

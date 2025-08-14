@@ -25,6 +25,7 @@
 @property(nonatomic, strong) CIFilter* contrastFilter;
 @property(nonatomic, strong) CIFilter* noiseReductionFilter;
 @property(nonatomic, strong) CIFilter* brightnessFilter;
+@property(nonatomic, strong) CIFilter* grayscaleFilter;
 
 // Metal device for GPU acceleration
 @property(nonatomic, strong) id<MTLDevice> metalDevice;
