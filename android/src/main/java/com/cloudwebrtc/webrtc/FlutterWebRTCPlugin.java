@@ -128,10 +128,19 @@ public class FlutterWebRTCPlugin implements FlutterPlugin, ActivityAware, EventC
     }
 
     private void stopListening() {
-        methodCallHandler.dispose();
-        methodCallHandler = null;
-        methodChannel.setMethodCallHandler(null);
-        eventChannel.setStreamHandler(null);
+        // Fully dispose all WebRTC resources, including renderers/textures, to avoid
+        // scheduling frames after the Flutter engine (FlutterJNI) is detached.
+        if (methodCallHandler != null) {
+            methodCallHandler.disposeAll();
+            methodCallHandler = null;
+        }
+
+        if (methodChannel != null) {
+            methodChannel.setMethodCallHandler(null);
+        }
+        if (eventChannel != null) {
+            eventChannel.setStreamHandler(null);
+        }
         if (AudioSwitchManager.instance != null) {
             Log.d(TAG, "Stopping the audio manager...");
             AudioSwitchManager.instance.stop();

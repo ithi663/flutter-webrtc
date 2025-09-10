@@ -31,6 +31,8 @@ public class SurfaceTextureRenderer extends EglRenderer {
   private int rotatedFrameWidth;
   private int rotatedFrameHeight;
   private int frameRotation;
+  // Guard to avoid operations after disposal/release
+  private volatile boolean disposed = false;
 
   /**
    * In order to render something, you must first call init().
@@ -98,8 +100,15 @@ public class SurfaceTextureRenderer extends EglRenderer {
   // VideoSink interface.
   @Override
   public void onFrame(VideoFrame frame) {
-    if(surface == null) {
-      producer.setSize(frame.getRotatedWidth(),frame.getRotatedHeight());
+    if (disposed) {
+      return;
+    }
+    if (surface == null) {
+      if (producer == null) {
+        // Producer not available; drop frame to avoid creating surfaces after disposal.
+        return;
+      }
+      producer.setSize(frame.getRotatedWidth(), frame.getRotatedHeight());
       surface = producer.getSurface();
       createEglSurface(surface);
     }
@@ -113,6 +122,7 @@ public class SurfaceTextureRenderer extends EglRenderer {
 
   public void surfaceCreated(final TextureRegistry.SurfaceProducer producer) {
     ThreadUtils.checkIsOnMainThread();
+    if (disposed) return;
     this.producer = producer;
     this.producer.setCallback(
             new TextureRegistry.SurfaceProducer.Callback() {
@@ -137,10 +147,27 @@ public class SurfaceTextureRenderer extends EglRenderer {
     surface = null;
   }
 
+  /**
+   * Final disposal that stops any future rendering and producer interactions.
+   * Use this when the renderer is no longer going to be reused.
+   */
+  public void disposeAndStop() {
+    // Mark disposed to stop any future onFrame/producer interactions.
+    disposed = true;
+    // Clear references to help GC and avoid NPEs in guards.
+    rendererEvents = null;
+    producer = null;
+    surface = null;
+    super.release();
+  }
+
   // Update frame dimensions and report any changes to |rendererEvents|.
   private void updateFrameDimensionsAndReportEvents(VideoFrame frame) {
     synchronized (layoutLock) {
       if (isRenderingPaused) {
+        return;
+      }
+      if (disposed) {
         return;
       }
       if (!isFirstFrameRendered) {
@@ -158,7 +185,9 @@ public class SurfaceTextureRenderer extends EglRenderer {
         }
         rotatedFrameWidth = frame.getRotatedWidth();
         rotatedFrameHeight = frame.getRotatedHeight();
-        producer.setSize(rotatedFrameWidth, rotatedFrameHeight);
+        if (producer != null) {
+          producer.setSize(rotatedFrameWidth, rotatedFrameHeight);
+        }
         frameRotation = frame.getRotation();
       }
     }

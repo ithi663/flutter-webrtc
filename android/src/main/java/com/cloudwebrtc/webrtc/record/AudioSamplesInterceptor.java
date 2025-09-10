@@ -5,7 +5,7 @@ import android.annotation.SuppressLint;
 import org.webrtc.audio.JavaAudioDeviceModule.SamplesReadyCallback;
 import org.webrtc.audio.JavaAudioDeviceModule.AudioSamples;
 
-import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** JavaAudioDeviceModule allows attaching samples callback only on building
  *  We don't want to instantiate VideoFileRenderer and codecs at this step
@@ -14,12 +14,21 @@ import java.util.HashMap;
 public class AudioSamplesInterceptor implements SamplesReadyCallback {
 
     @SuppressLint("UseSparseArrays")
-    protected final HashMap<Integer, SamplesReadyCallback> callbacks = new HashMap<>();
+    protected final ConcurrentHashMap<Integer, SamplesReadyCallback> callbacks = new ConcurrentHashMap<>();
 
     @Override
     public void onWebRtcAudioRecordSamplesReady(AudioSamples audioSamples) {
-        for (SamplesReadyCallback callback : callbacks.values()) {
-            callback.onWebRtcAudioRecordSamplesReady(audioSamples);
+        // Iterate over a stable snapshot to avoid concurrent modification issues
+        final SamplesReadyCallback[] snapshot = callbacks.values().toArray(new SamplesReadyCallback[0]);
+        for (SamplesReadyCallback callback : snapshot) {
+            try {
+                if (callback != null) {
+                    callback.onWebRtcAudioRecordSamplesReady(audioSamples);
+                }
+            } catch (Throwable t) {
+                // Make callback invocation robust; swallow per-listener errors to avoid breaking others
+                // Optionally: log using your logging facility if available
+            }
         }
     }
 

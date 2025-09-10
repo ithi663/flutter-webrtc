@@ -37,6 +37,9 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
     private NightVisionRenderer nightVisionDrawer = null;
     private float nightVisionIntensity = DEFAULT_NIGHT_VISION_INTENSITY;
 
+    // Guard to avoid operations after disposal
+    private volatile boolean disposed = false;
+
     /**
      * The {@code RendererEvents} which listens to rendering events reported by
      * {@link #surfaceTextureRenderer}.
@@ -120,6 +123,7 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
 
     @Override
     public void onListen(Object o, EventChannel.EventSink sink) {
+        if (disposed) return;
         eventSink = new AnyThreadSink(sink);
     }
 
@@ -146,6 +150,7 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
      *                    {@code FlutterRTCVideoRenderer} or {@code null}.
      */
     public void setStream(MediaStream mediaStream, String ownerTag) {
+        if (disposed) return;
         VideoTrack videoTrack;
         this.mediaStream = mediaStream;
         this.ownerTag = ownerTag;
@@ -172,6 +177,7 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
      *                    {@code FlutterRTCVideoRenderer} or {@code null}.
      */
     public void setStream(MediaStream mediaStream, String trackId, String ownerTag) {
+        if (disposed) return;
         VideoTrack videoTrack;
         this.mediaStream = mediaStream;
         this.ownerTag = ownerTag;
@@ -200,6 +206,7 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
      *                   {@code FlutterRTCVideoRenderer} or {@code null}.
      */
     public void setVideoTrack(VideoTrack videoTrack) {
+        if (disposed) return;
         VideoTrack oldValue = this.videoTrack;
 
         if (oldValue != videoTrack) {
@@ -230,6 +237,7 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
      * all preconditions for the start of rendering are met.
      */
     private void tryAddRendererToVideoTrack() throws Exception {
+        if (disposed) return;
         if (videoTrack != null) {
             EglBase.Context sharedContext = EglUtils.getRootEglBaseContext();
 
@@ -372,6 +380,16 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
      */
     public void Dispose() {
         Log.d(TAG, "FlutterRTCVideoRenderer.Dispose() - cleaning up renderer resources");
+        disposed = true;
+
+        // Remove sink from the current video track BEFORE releasing GL resources to stop callbacks
+        try {
+            if (videoTrack != null) {
+                removeRendererFromVideoTrack();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Dispose(): error removing sink from videoTrack: " + e.getMessage());
+        }
 
         // Ensure night-vision resources are released without re-initializing GL drawer.
         if (nightVisionEnabled || nightVisionDrawer != null) {
@@ -379,7 +397,7 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
         }
 
         if (surfaceTextureRenderer != null) {
-            surfaceTextureRenderer.release();
+            surfaceTextureRenderer.disposeAndStop();
         }
 
         if (eventChannel != null) {
@@ -388,5 +406,10 @@ public class FlutterRTCVideoRenderer implements EventChannel.StreamHandler {
 
         eventSink = null;
         producer.release();
+
+        // Clear references
+        videoTrack = null;
+        mediaStream = null;
+        ownerTag = null;
     }
 }
