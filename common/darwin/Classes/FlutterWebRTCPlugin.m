@@ -482,6 +482,9 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
                 message:[NSString stringWithFormat:@"Error: peerConnection not found!"]
                 details:nil]);
     }
+  } else if ([@"stopAll" isEqualToString:call.method]) {
+    [self stopAll];
+    result(nil);
   } else if ([@"sendDtmf" isEqualToString:call.method]) {
     NSDictionary* argsMap = call.arguments;
     NSString* peerConnectionId = argsMap[@"peerConnectionId"];
@@ -1752,6 +1755,105 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
   } else {
     [self handleFrameCryptorMethodCall:call result:result];
   }
+}
+
+- (void)stopAll {
+  NSLog(@"[FlutterWebRTC] stopAll() - releasing WebRTC media resources but keeping infrastructure");
+
+  // 1) Stop all active recordings, clear audio interceptors on recorders, and empty the recorders map
+  if (self.recorders != nil && self.recorders.count > 0) {
+    for (NSNumber* recorderId in [self.recorders allKeys]) {
+      MediaRecorderImpl* recorder = [self.recorders objectForKey:recorderId];
+      if (recorder) {
+        id<RTCAudioRenderer> audioInterceptor = [recorder audioInterceptor];
+        if (audioInterceptor && [audioInterceptor isKindOfClass:[AudioRenderer class]]) {
+          [(AudioRenderer*)audioInterceptor clearRecorder];
+        }
+        [recorder stopRecording];
+      }
+    }
+    [self.recorders removeAllObjects];
+  }
+
+  // 2) Clear all texture-based renderers by detaching their video tracks (keep the renderers alive)
+  if (self.renders != nil && self.renders.count > 0) {
+    for (FlutterRTCVideoRenderer* renderer in self.renders.allValues) {
+      if (renderer != nil) {
+        renderer.videoTrack = nil;
+      }
+    }
+  }
+
+#if TARGET_OS_IPHONE
+  // 2b) Clear all platform view renderers as well
+  if (_platformViewFactory != nil && _platformViewFactory.renders != nil && _platformViewFactory.renders.count > 0) {
+    for (NSNumber* key in _platformViewFactory.renders.allKeys) {
+      FlutterRTCVideoPlatformViewController* render = _platformViewFactory.renders[key];
+      if (render != nil) {
+        render.videoTrack = nil;
+      }
+    }
+  }
+#endif
+
+  // 3) Release all local media streams and tracks
+  if (self.localStreams != nil && self.localStreams.count > 0) {
+    for (NSString* streamId in [self.localStreams allKeys]) {
+      RTCMediaStream* stream = self.localStreams[streamId];
+      if (!stream) continue;
+
+      // Stop and detach video tracks
+      for (RTCVideoTrack* vTrack in [stream.videoTracks copy]) {
+        if (vTrack) {
+          vTrack.isEnabled = NO;
+          // Remove from any attached renderer
+          FlutterRTCVideoRenderer* renderer = [self findRendererByTrackId:vTrack.trackId];
+          if (renderer != nil) {
+            renderer.videoTrack = nil;
+          }
+          // Stop camera capturer if there is a stop handler registered
+          CapturerStopHandler stopHandler = self.videoCapturerStopHandlers[vTrack.trackId];
+          if (stopHandler) {
+            stopHandler(^{
+              NSLog(@"video capturer stopped, trackID = %@", vTrack.trackId);
+              self.videoCapturer = nil;
+            });
+            [self.videoCapturerStopHandlers removeObjectForKey:vTrack.trackId];
+          }
+          // Remove from stream and localTracks map
+          [stream removeVideoTrack:vTrack];
+          [self.localTracks removeObjectForKey:vTrack.trackId];
+        }
+      }
+
+      // Stop and detach audio tracks
+      for (RTCAudioTrack* aTrack in [stream.audioTracks copy]) {
+        if (aTrack) {
+          aTrack.isEnabled = NO;
+          [stream removeAudioTrack:aTrack];
+          [self.localTracks removeObjectForKey:aTrack.trackId];
+        }
+      }
+    }
+    [self.localStreams removeAllObjects];
+  }
+
+  // 4) Disable and clear any remaining localTracks entries not handled above
+  if (self.localTracks != nil && self.localTracks.count > 0) {
+    for (NSString* trackKey in [self.localTracks allKeys]) {
+      id<LocalTrack> ltrack = self.localTracks[trackKey];
+      RTCMediaStreamTrack* mediaTrack = [ltrack track];
+      if (mediaTrack) {
+        mediaTrack.isEnabled = NO;
+      }
+    }
+    [self.localTracks removeAllObjects];
+  }
+
+  // 5) Deactivate audio session if appropriate
+  [self deactiveRtcAudioSession];
+
+  NSLog(@"[FlutterWebRTC] stopAll() - all WebRTC media resources released but infrastructure maintained");
 }
 
 - (void)dealloc {
