@@ -15,6 +15,8 @@
 #import "AudioManager.h"
 #import "AudioRenderer.h"
 #import <WebRTC/RTCAudioRenderer.h>
+#import "FlutterRtpStreamCapturer.h"
+#import "VideoProcessingAdapter.h"
 
 #import <AVFoundation/AVFoundation.h>
 #import <WebRTC/RTCFieldTrials.h>
@@ -345,6 +347,54 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
     [self getDisplayMedia:constraints result:result];
   } else if ([@"createLocalMediaStream" isEqualToString:call.method]) {
     [self createLocalMediaStream:result];
+  } else if ([@"createNetworkVideoTrack" isEqualToString:call.method]) {
+    NSDictionary* argsMap = call.arguments;
+    NSString* url = argsMap[@"url"];
+    if (url == nil || [url length] == 0) {
+      result([FlutterError errorWithCode:@"createNetworkVideoTrackFailed"
+                                 message:@"Error: url is required"
+                                 details:nil]);
+      return;
+    }
+
+    NSString* trackUUID = [[NSUUID UUID] UUIDString];
+    RTCVideoSource* videoSource = [self.peerConnectionFactory videoSourceForScreenCast:NO];
+    VideoProcessingAdapter *videoProcessingAdapter = [[VideoProcessingAdapter alloc] initWithRTCVideoSource:videoSource];
+
+    FlutterRtpStreamCapturer* capturer = [[FlutterRtpStreamCapturer alloc] initWithDelegate:videoProcessingAdapter];
+    [capturer startCaptureWithURL:url options:argsMap];
+
+    self.videoCapturerStopHandlers[trackUUID] = ^(CompletionHandler handler) {
+      [capturer stopCaptureWithCompletionHandler:handler];
+    };
+
+    RTCVideoTrack* videoTrack = [self.peerConnectionFactory videoTrackWithSource:videoSource
+                                                                         trackId:trackUUID];
+    LocalVideoTrack *localVideoTrack = [[LocalVideoTrack alloc] initWithTrack:videoTrack videoProcessing:videoProcessingAdapter];
+    [self.localTracks setObject:localVideoTrack forKey:trackUUID];
+
+    result(@{ @"trackId": trackUUID });
+  } else if ([@"disposeNetworkVideoTrack" isEqualToString:call.method]) {
+    NSDictionary* argsMap = call.arguments;
+    NSString* trackId = argsMap[@"trackId"];
+    if (trackId == nil) {
+      result([FlutterError errorWithCode:@"disposeNetworkVideoTrackFailed"
+                                 message:@"Error: trackId is required"
+                                 details:nil]);
+      return;
+    }
+
+    CapturerStopHandler stopHandler = self.videoCapturerStopHandlers[trackId];
+    if (stopHandler) {
+      stopHandler(^{
+        [self.videoCapturerStopHandlers removeObjectForKey:trackId];
+        [self.localTracks removeObjectForKey:trackId];
+        result(nil);
+      });
+    } else {
+      [self.localTracks removeObjectForKey:trackId];
+      result(nil);
+    }
   } else if ([@"getSources" isEqualToString:call.method]) {
     [self getSources:result];
   } else if ([@"selectAudioInput" isEqualToString:call.method]) {

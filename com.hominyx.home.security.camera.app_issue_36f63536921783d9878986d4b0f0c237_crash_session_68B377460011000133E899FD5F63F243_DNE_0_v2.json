@@ -1,0 +1,572 @@
+{
+  "title": "Crashlytics - Custom logs",
+  "bundle_identifier": "com.hominyx.home.security.camera.app",
+  "platform": "android",
+  "display_version": "1.3.0",
+  "build_version": "158",
+  "issue_id": "36f63536921783d9878986d4b0f0c237",
+  "session_id": "68B377460011000133E899FD5F63F243_DNE_0_v2",
+  "event_timestamp": "Sun Aug 31 2025 05:13:45 GMT+0700 (Indochina Time)",
+  "logs_and_breadcrumbs": [
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:23 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "SplashScreen",
+        "firebase_screen_class": "SplashScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:23 GMT+0700 (Indochina Time)",
+      "name": "first_launch",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "SplashScreen",
+        "firebase_screen_class": "SplashScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:26 GMT+0700 (Indochina Time)",
+      "name": "onboard1_opened",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "SplashScreen",
+        "firebase_screen_class": "SplashScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:26 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "OnboardingScreen",
+        "firebase_screen_class": "OnboardingScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:27 GMT+0700 (Indochina Time)",
+      "name": "initial_restore_started",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "OnboardingScreen",
+        "firebase_screen_class": "OnboardingScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:28 GMT+0700 (Indochina Time)",
+      "name": "initial_restore_failed",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "OnboardingScreen",
+        "firebase_screen_class": "OnboardingScreen",
+        "error": "(code: 1004, message: No purchases to restore, detail: null)"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:34 GMT+0700 (Indochina Time)",
+      "name": "onboard1_continue_tapped",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "OnboardingScreen",
+        "firebase_screen_class": "OnboardingScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:34 GMT+0700 (Indochina Time)",
+      "name": "onboard2_opened",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "OnboardingScreen",
+        "firebase_screen_class": "OnboardingScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:39 GMT+0700 (Indochina Time)",
+      "name": "onboard2_continue_tapped",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "OnboardingScreen",
+        "firebase_screen_class": "OnboardingScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:39 GMT+0700 (Indochina Time)",
+      "name": "onboard2_feature_list_voted",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "OnboardingScreen",
+        "firebase_screen_class": "OnboardingScreen",
+        "option": "baby_monitoring"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:39 GMT+0700 (Indochina Time)",
+      "name": "onboard3_opened",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "OnboardingScreen",
+        "firebase_screen_class": "OnboardingScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:39 GMT+0700 (Indochina Time)",
+      "name": "rate_us_prompt_requested",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "OnboardingScreen",
+        "location": "onboarding_2_opened",
+        "firebase_screen_class": "OnboardingScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:39 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen_class": "PlayCoreDialogWrapperActivity"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:44 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen_class": "MainActivity"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:45 GMT+0700 (Indochina Time)",
+      "name": "onboard3_continue_tapped",
+      "source": "analytics",
+      "params": {
+        "firebase_screen_class": "MainActivity"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:45 GMT+0700 (Indochina Time)",
+      "name": "onboard3_feature_list_voted",
+      "source": "analytics",
+      "params": {
+        "firebase_screen_class": "MainActivity",
+        "option": ""
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:45 GMT+0700 (Indochina Time)",
+      "name": "onboard4_opened",
+      "source": "analytics",
+      "params": {
+        "firebase_screen_class": "MainActivity"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:51 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "MainPremiumScreen",
+        "firebase_screen_class": "MainPremiumScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:51 GMT+0700 (Indochina Time)",
+      "name": "onboard_paywall_opened",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "MainPremiumScreen",
+        "placement": "onboarding_",
+        "firebase_screen_class": "MainPremiumScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:57 GMT+0700 (Indochina Time)",
+      "name": "paywall_tap_subscription_plan",
+      "source": "analytics",
+      "params": {
+        "price": "year",
+        "firebase_screen": "MainPremiumScreen",
+        "placement": "onboarding_",
+        "firebase_screen_class": "MainPremiumScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:59 GMT+0700 (Indochina Time)",
+      "name": "paywall_tap_continue_for_free",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "MainPremiumScreen",
+        "placement": "onboarding_",
+        "firebase_screen_class": "MainPremiumScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:12:59 GMT+0700 (Indochina Time)",
+      "name": "purchase_initiated",
+      "source": "analytics",
+      "params": {
+        "product_id": "year_notrial_080725",
+        "firebase_screen": "MainPremiumScreen",
+        "placement": "onboarding_",
+        "firebase_screen_class": "MainPremiumScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:00 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen_class": "ProxyBillingActivity"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:04 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen_class": "MainActivity"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:04 GMT+0700 (Indochina Time)",
+      "name": "purchase_cancelled",
+      "source": "analytics",
+      "params": {
+        "product_id": "week_trial_080725",
+        "firebase_screen_class": "MainActivity"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:07 GMT+0700 (Indochina Time)",
+      "name": "onboard_paywall_close",
+      "source": "analytics",
+      "params": {
+        "placement": "onboarding_",
+        "firebase_screen_class": "MainActivity"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:07 GMT+0700 (Indochina Time)",
+      "name": "authorize_page_opened",
+      "source": "analytics",
+      "params": {
+        "firebase_screen_class": "MainActivity"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:07 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "AuthGateScreen",
+        "firebase_screen_class": "AuthGateScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:11 GMT+0700 (Indochina Time)",
+      "name": "authorize_option_tapped",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "AuthGateScreen",
+        "firebase_screen_class": "AuthGateScreen",
+        "type": "Login"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:11 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "SignUpScreen",
+        "firebase_screen_class": "SignUpScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:11 GMT+0700 (Indochina Time)",
+      "name": "sign_in_screen_viewed",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "SignUpScreen",
+        "firebase_screen_class": "SignUpScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:12 GMT+0700 (Indochina Time)",
+      "name": "sign_in_google_tapped",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "SignUpScreen",
+        "firebase_screen_class": "SignUpScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:12 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen_class": "SignInHubActivity"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:18 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen_class": "MainActivity"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:19 GMT+0700 (Indochina Time)",
+      "name": "sign_in_success",
+      "source": "analytics",
+      "params": {
+        "firebase_screen_class": "MainActivity",
+        "type": "google"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:19 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "HomeScreen",
+        "firebase_screen_class": "HomeScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:19 GMT+0700 (Indochina Time)",
+      "name": "main_opened",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "HomeScreen",
+        "firebase_screen_class": "HomeScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:23 GMT+0700 (Indochina Time)",
+      "name": "main_add_device_tapped",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "HomeScreen",
+        "firebase_screen_class": "HomeScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:25 GMT+0700 (Indochina Time)",
+      "name": "initial_restore_started",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "HomeScreen",
+        "firebase_screen_class": "HomeScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:25 GMT+0700 (Indochina Time)",
+      "name": "qr_screen_opened",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "HomeScreen",
+        "firebase_screen_class": "HomeScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:25 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "QRCodeScreen",
+        "firebase_screen_class": "QRCodeScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:25 GMT+0700 (Indochina Time)",
+      "name": "qr_timer_started",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "QRCodeScreen",
+        "firebase_screen_class": "QRCodeScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:26 GMT+0700 (Indochina Time)",
+      "name": "initial_restore_failed",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "QRCodeScreen",
+        "firebase_screen_class": "QRCodeScreen",
+        "error": "(code: 1004, message: No purchases to restore, detail: null)"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:26 GMT+0700 (Indochina Time)",
+      "name": "check_premium_state_started",
+      "source": "analytics",
+      "params": {
+        "user_id": "acepedaelias@gmail.com",
+        "firebase_screen": "QRCodeScreen",
+        "firebase_screen_class": "QRCodeScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:27 GMT+0700 (Indochina Time)",
+      "name": "check_premium_state_failed",
+      "source": "analytics",
+      "params": {
+        "user_id": "acepedaelias@gmail.com",
+        "firebase_screen": "QRCodeScreen",
+        "firebase_screen_class": "QRCodeScreen",
+        "error": "(code: 1004, message: No purchases to restore, detail: null)"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:27 GMT+0700 (Indochina Time)",
+      "name": "identify_user_started",
+      "source": "analytics",
+      "params": {
+        "user_id": "acepedaelias@gmail.com",
+        "firebase_screen": "QRCodeScreen",
+        "firebase_screen_class": "QRCodeScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:28 GMT+0700 (Indochina Time)",
+      "name": "identify_user_successful",
+      "source": "analytics",
+      "params": {
+        "user_id": "acepedaelias@gmail.com",
+        "firebase_screen": "QRCodeScreen",
+        "firebase_screen_class": "QRCodeScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:30 GMT+0700 (Indochina Time)",
+      "name": "qr_close_tapped",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "QRCodeScreen",
+        "firebase_screen_class": "QRCodeScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:33 GMT+0700 (Indochina Time)",
+      "name": "in_app_banner_clicked",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "QRCodeScreen",
+        "place": "main",
+        "firebase_screen_class": "QRCodeScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:33 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "MainPremiumScreen",
+        "firebase_screen_class": "MainPremiumScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:33 GMT+0700 (Indochina Time)",
+      "name": "paywall_opened",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "MainPremiumScreen",
+        "placement": "main_",
+        "firebase_screen_class": "MainPremiumScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:35 GMT+0700 (Indochina Time)",
+      "name": "paywall_close",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "MainPremiumScreen",
+        "placement": "main_",
+        "firebase_screen_class": "MainPremiumScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:36 GMT+0700 (Indochina Time)",
+      "name": "settings_tab_opened",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "MainPremiumScreen",
+        "firebase_screen_class": "MainPremiumScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:38 GMT+0700 (Indochina Time)",
+      "name": "settings_switch_to_camera_tapped",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "MainPremiumScreen",
+        "firebase_screen_class": "MainPremiumScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:38 GMT+0700 (Indochina Time)",
+      "name": "switch_to_camera_popup_opened",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "MainPremiumScreen",
+        "firebase_screen_class": "MainPremiumScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:39 GMT+0700 (Indochina Time)",
+      "name": "switch_to_camera_qr_code_tapped",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "MainPremiumScreen",
+        "firebase_screen_class": "MainPremiumScreen",
+        "option": "scan_qr_tapped"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:39 GMT+0700 (Indochina Time)",
+      "name": "qr_scanner_screen_opened",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "MainPremiumScreen",
+        "firebase_screen_class": "MainPremiumScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:39 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "QRScannerScreen",
+        "firebase_screen_class": "QRScannerScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:42 GMT+0700 (Indochina Time)",
+      "name": "qr_code_scanned",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "QRScannerScreen",
+        "firebase_screen_class": "QRScannerScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:45 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "CameraScreen",
+        "firebase_screen_class": "CameraScreen"
+      }
+    },
+    {
+      "timestamp": "Sun Aug 31 2025 05:13:45 GMT+0700 (Indochina Time)",
+      "name": "screen_view",
+      "source": "analytics",
+      "params": {
+        "firebase_screen": "CameraVerticalScreen",
+        "firebase_screen_class": "CameraVerticalScreen"
+      }
+    }
+  ]
+}
