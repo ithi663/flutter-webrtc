@@ -47,10 +47,15 @@
   dispatch_source_set_timer(_timer, dispatch_time(DISPATCH_TIME_NOW, 0), intervalNs, intervalNs / 10);
   __weak __typeof__(self) weakSelf = self;
   dispatch_source_set_event_handler(_timer, ^{
+    __strong __typeof__(weakSelf) strongSelf = weakSelf;
+    if (!strongSelf) {
+      return;
+    }
+
     CVPixelBufferRef pixelBuffer = NULL;
     CVReturn status = CVPixelBufferCreate(kCFAllocatorDefault,
-                                          weakSelf->_width,
-                                          weakSelf->_height,
+                                          strongSelf->_width,
+                                          strongSelf->_height,
                                           kCVPixelFormatType_32BGRA,
                                           NULL,
                                           &pixelBuffer);
@@ -62,13 +67,13 @@
     uint8_t* base = (uint8_t*)CVPixelBufferGetBaseAddress(pixelBuffer);
     size_t bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer);
 
-    uint8_t r = (uint8_t)((weakSelf->_frameCount * 3) % 255);
-    uint8_t g = (uint8_t)((weakSelf->_frameCount * 5) % 255);
-    uint8_t b = (uint8_t)((weakSelf->_frameCount * 7) % 255);
+    uint8_t r = (uint8_t)((strongSelf->_frameCount * 3) % 255);
+    uint8_t g = (uint8_t)((strongSelf->_frameCount * 5) % 255);
+    uint8_t b = (uint8_t)((strongSelf->_frameCount * 7) % 255);
 
-    for (size_t y = 0; y < weakSelf->_height; ++y) {
+    for (size_t y = 0; y < strongSelf->_height; ++y) {
       uint8_t* row = base + y * bytesPerRow;
-      for (size_t x = 0; x < weakSelf->_width; ++x) {
+      for (size_t x = 0; x < strongSelf->_width; ++x) {
         size_t idx = x * 4;
         row[idx + 0] = (uint8_t)((b + x) & 0xFF);
         row[idx + 1] = (uint8_t)((g + y) & 0xFF);
@@ -79,7 +84,7 @@
     CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
 
     frameHandler(pixelBuffer);
-    weakSelf->_frameCount++;
+    strongSelf->_frameCount++;
     CVPixelBufferRelease(pixelBuffer);
   });
   dispatch_resume(_timer);
@@ -149,18 +154,24 @@
     _decoder = [[FlutterSyntheticDecoder alloc] init];
   }
   [_decoder startWithURL:url options:options frameHandler:^(CVPixelBufferRef pixelBuffer) {
-    if (!weakSelf || !weakSelf->_isCapturing) { return; }
-    int64_t now = mach_absolute_time();
-    int64_t nowNs = now * weakSelf->_timebaseInfo.numer / weakSelf->_timebaseInfo.denom;
-    if (weakSelf->_startTimeStampNs < 0) {
-      weakSelf->_startTimeStampNs = nowNs;
+    __strong __typeof__(weakSelf) strongSelf = weakSelf;
+    if (!strongSelf) {
+      return;
     }
-    int64_t tsNs = nowNs - weakSelf->_startTimeStampNs;
+    if (!strongSelf->_isCapturing) {
+      return;
+    }
+    int64_t now = mach_absolute_time();
+    int64_t nowNs = now * strongSelf->_timebaseInfo.numer / strongSelf->_timebaseInfo.denom;
+    if (strongSelf->_startTimeStampNs < 0) {
+      strongSelf->_startTimeStampNs = nowNs;
+    }
+    int64_t tsNs = nowNs - strongSelf->_startTimeStampNs;
     RTCCVPixelBuffer* rtcPixelBuffer = [[RTCCVPixelBuffer alloc] initWithPixelBuffer:pixelBuffer];
     RTCVideoFrame* frame = [[RTCVideoFrame alloc] initWithBuffer:[rtcPixelBuffer toI420]
                                                        rotation:RTCVideoRotation_0
                                                     timeStampNs:tsNs];
-    [weakSelf.delegate capturer:weakSelf didCaptureVideoFrame:frame];
+    [strongSelf.delegate capturer:strongSelf didCaptureVideoFrame:frame];
   }];
 }
 

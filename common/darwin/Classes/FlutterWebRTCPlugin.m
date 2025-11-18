@@ -1896,8 +1896,29 @@ bypassVoiceProcessing:(BOOL)bypassVoiceProcessing {
       if (mediaTrack) {
         mediaTrack.isEnabled = NO;
       }
+      CapturerStopHandler stopHandler = self.videoCapturerStopHandlers[trackKey];
+      if (stopHandler) {
+        stopHandler(^{
+          NSLog(@"video capturer stopped, trackID = %@", trackKey);
+          self.videoCapturer = nil;
+        });
+        [self.videoCapturerStopHandlers removeObjectForKey:trackKey];
+      }
     }
     [self.localTracks removeAllObjects];
+  }
+
+  if (self.videoCapturerStopHandlers != nil && self.videoCapturerStopHandlers.count > 0) {
+    for (NSString* key in [self.videoCapturerStopHandlers allKeys]) {
+      CapturerStopHandler handler = self.videoCapturerStopHandlers[key];
+      if (handler) {
+        handler(^{
+          NSLog(@"video capturer stopped, trackID = %@", key);
+          self.videoCapturer = nil;
+        });
+      }
+    }
+    [self.videoCapturerStopHandlers removeAllObjects];
   }
 
   // 5) Deactivate audio session if appropriate
